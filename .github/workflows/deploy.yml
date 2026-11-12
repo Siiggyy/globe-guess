@@ -34,6 +34,12 @@ jobs:
           sed -i "s|PASTE_YOUR_GOOGLE_MAPS_KEY_HERE|${GOOGLE_MAPS_KEY}|" config.js
           grep -q "PASTE_YOUR_GOOGLE_MAPS_KEY_HERE" config.js && { echo "::error::Key was not inserted"; exit 1; } || true
 
+      - name: Cache-bust local scripts and styles so every deploy loads fresh files
+        run: |
+          v="${GITHUB_SHA::8}"
+          sed -i -E "s#(src|href)=\"(style\.css|config\.js|locations\.js|app\.js)\"#\1=\"\2?v=${v}\"#g" index.html
+          grep -q "app.js?v=${v}" index.html
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
