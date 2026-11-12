@@ -138,3 +138,21 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
   .pano-tools { bottom: 20px; }
   .player-pills { max-width: calc(100% - 24px); }
 }
+
+/* final summary */
+.final .final-list { margin: 0 0 8px; }
+.breakdown-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.breakdown-head h3 { margin: 0; }
+.table-wrap { overflow-x: auto; }
+.breakdown { white-space: nowrap; }
+.breakdown td, .breakdown th { vertical-align: top; }
+.breakdown .place { display: block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.breakdown .round-row { cursor: pointer; }
+.breakdown .round-row:hover td, .breakdown .round-row.active td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.breakdown td.best { color: var(--accent); font-weight: 700; }
+.breakdown tfoot th { text-align: right; padding: 8px 4px; border-top: 2px solid var(--line); color: var(--text); font-weight: 700; }
+.breakdown tfoot th:first-child { text-align: left; }
+.num-pin { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: #111; color: #ffd23f; border: 2px solid #ffd23f; font: 700 13px/1 system-ui, sans-serif; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+
+/* "No move, pan or zoom": a transparent layer stops all interaction with the panorama */
+.pano-block { position: absolute; inset: 0; z-index: 4; cursor: not-allowed; }

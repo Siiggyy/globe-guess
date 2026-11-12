@@ -31,6 +31,7 @@ function show(name) {
   if (!inGame) $('#hud-timer').hidden = true;
   if (name === 'game') setTimeout(() => guessMap.invalidateSize(), 0);
   if (name === 'reveal') setTimeout(() => revealMap.invalidateSize(), 0);
+  if (name === 'final') setTimeout(() => finalMap.invalidateSize(), 0);
 }
 let toastTimer;
 function toast(msg) {
@@ -50,7 +51,7 @@ function fmtDist(km) {
 }
 
 /* ---------------- maps ---------------- */
-let guessMap, guessMarker = null, revealMap, revealLayer;
+let guessMap, guessMarker = null, revealMap, revealLayer, finalMap, finalLayer, finalBounds = [], finalAllBounds = null;
 function tiles() {
   return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 18, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -70,6 +71,9 @@ function initMaps() {
   revealMap = L.map('reveal-map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 1);
   tiles().addTo(revealMap);
   revealLayer = L.layerGroup().addTo(revealMap);
+  finalMap = L.map('final-map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 1);
+  tiles().addTo(finalMap);
+  finalLayer = L.layerGroup().addTo(finalMap);
 }
 
 /* ---------------- geo + scoring ---------------- */
@@ -118,6 +122,11 @@ async function getPano() {
       motionTracking: false, motionTrackingControl: false, enableCloseButton: false,
       linksControl: true, panControl: true, zoomControl: true, clickToGo: true, scrollwheel: true
     });
+    svPano.addListener('pano_changed', () => {
+      if (view.round && view.round.move && view.round.move !== 'move' && startPano && svPano.getPano() !== startPano.pano) {
+        svPano.setPano(startPano.pano);
+      }
+    });
     svPano.addListener('status_changed', () => {
       if (svPano.getStatus() === 'OK') $('#pano-loading').hidden = true;
     });
@@ -127,7 +136,8 @@ async function getPano() {
 async function fetchLocation() {
   const lib = await getStreetView();
   for (let attempt = 0; attempt < 15; attempt++) {
-    const seed = window.LOCATIONS[Math.floor(Math.random() * window.LOCATIONS.length)];
+    const pool = window.LOCATION_REGIONS[game.settings.region] || window.LOCATION_REGIONS.world;
+    const seed = pool[Math.floor(Math.random() * pool.length)];
     const lat = seed[0] + (Math.random() - 0.5) * 0.6;
     const lng = seed[1] + (Math.random() - 0.5) * 0.6;
     const req = { location: { lat, lng }, radius: 15000, preference: lib.StreetViewPreference.NEAREST };
@@ -159,10 +169,10 @@ async function fetchLocation() {
  * ================================================================= */
 const game = {
   players: new Map(), // id -> {name, total, color}
-  settings: { rounds: 5, time: 90 },
+  settings: { rounds: 5, time: 90, move: 'move', region: 'world', compass: 'on' },
   phase: 'lobby',     // lobby | loading | round | reveal | final
   roundNo: 0, current: null, roundStart: 0,
-  guesses: new Map(), used: new Set(), timer: null, next: null, lastReveal: null, code: null
+  guesses: new Map(), used: new Set(), timer: null, next: null, lastReveal: null, lastFinal: null, history: [], code: null
 };
 
 function broadcast(msg) {
@@ -212,6 +222,7 @@ function hostOnMessage(from, msg) {
     broadcastPlayers();
     if (game.phase === 'round') sendTo(from, roundMsg());
     else if (game.phase === 'reveal' && game.lastReveal) sendTo(from, game.lastReveal);
+    else if (game.phase === 'final' && game.lastFinal) sendTo(from, game.lastFinal);
     else if (game.phase === 'loading') sendTo(from, { t: 'loading', n: game.roundNo + 1, total: game.settings.rounds });
   } else if (msg.t === 'guess') {
     if (game.phase !== 'round' || game.guesses.has(from) || !game.players.has(from)) return;
@@ -223,11 +234,23 @@ function hostOnMessage(from, msg) {
   }
 }
 
+const SETTING_IDS = ['rounds', 'time', 'move', 'region', 'compass'];
+function readSettings() {
+  const v = (id) => $('#set-' + id).value;
+  game.settings = {
+    rounds: Number(v('rounds')) || 5,
+    time: Number(v('time')) || 0,
+    move: ['move', 'nomove', 'nmpz'].includes(v('move')) ? v('move') : 'move',
+    region: window.LOCATION_REGIONS[v('region')] ? v('region') : 'world',
+    compass: v('compass') === 'off' ? 'off' : 'on'
+  };
+}
 function hostStart() {
-  game.settings.rounds = Number($('#set-rounds').value) || 5;
-  game.settings.time = Number($('#set-time').value) || 0;
+  readSettings();
   game.roundNo = 0;
   game.used.clear();
+  game.history = [];
+  game.lastFinal = null;
   for (const p of game.players.values()) p.total = 0;
   hostNextRound();
 }
@@ -261,7 +284,8 @@ async function hostNextRound() {
 function roundMsg() {
   const timed = game.settings.time > 0;
   const remaining = timed ? Math.max(0, game.settings.time - (Date.now() - game.roundStart) / 1000) : 0;
-  return { t: 'round', n: game.roundNo, total: game.settings.rounds, pano: game.current.pano, heading: game.current.heading, timed, remaining };
+  return { t: 'round', n: game.roundNo, total: game.settings.rounds, pano: game.current.pano, heading: game.current.heading, timed, remaining,
+    move: game.settings.move, compass: game.settings.compass };
 }
 function hostReveal() {
   if (game.phase !== 'round') return;
@@ -280,6 +304,7 @@ function hostReveal() {
     answer: { lat: a.lat, lng: a.lng, title: a.title, url: a.url },
     results, last: game.roundNo >= game.settings.rounds
   };
+  game.history.push(game.lastReveal);
   broadcast(game.lastReveal);
   broadcastPlayers();
 }
@@ -288,7 +313,9 @@ function hostFinal() {
   const standings = [...game.players.entries()]
     .map(([id, p]) => ({ id, name: p.name, color: p.color, total: p.total }))
     .sort((a, b) => b.total - a.total);
-  broadcast({ t: 'final', standings });
+  const rounds = game.history.map((r) => ({ n: r.n, answer: r.answer, results: r.results }));
+  game.lastFinal = { t: 'final', standings, rounds };
+  broadcast(game.lastFinal);
 }
 function hostBackToLobby() {
   game.phase = 'lobby';
@@ -353,8 +380,7 @@ function renderPlayers() {
   $('#game-players').innerHTML = view.players.length > 1 ? items : '';
   $('#hud-score').textContent = myTotal().toLocaleString() + ' pts';
   if (!me.isHost && view.settings) {
-    $('#set-rounds').value = String(view.settings.rounds);
-    $('#set-time').value = String(view.settings.time);
+    for (const id of SETTING_IDS) if (view.settings[id] != null) $('#set-' + id).value = String(view.settings[id]);
   }
 }
 function renderLobby() {
@@ -363,8 +389,7 @@ function renderLobby() {
   $('#lobby-code').textContent = view.code || '';
   $('#btn-start').hidden = !me.isHost;
   $('#lobby-wait').hidden = me.isHost;
-  $('#set-rounds').disabled = !me.isHost;
-  $('#set-time').disabled = !me.isHost;
+  for (const id of SETTING_IDS) $('#set-' + id).disabled = !me.isHost;
   renderPlayers();
 }
 
@@ -392,6 +417,7 @@ function startRoundView(pano, msg) {
   $('#pano-loading').hidden = false;
   startPano = { pano, heading: msg.heading || 0 };
   getPano().then((p) => {
+    applyRestrictions(p, msg);
     p.setPano(pano);
     p.setPov({ heading: startPano.heading, pitch: 0 });
     p.setZoom(0);
@@ -407,6 +433,18 @@ function startRoundView(pano, msg) {
     tickTimer();
     view.timerInt = setInterval(tickTimer, 250);
   }
+}
+function applyRestrictions(p, msg) {
+  const move = msg.move || 'move';
+  const canMove = move === 'move';
+  const nmpz = move === 'nmpz';
+  p.setOptions({
+    linksControl: canMove, clickToGo: canMove, keyboardShortcuts: !nmpz && canMove,
+    panControl: msg.compass !== 'off' && !nmpz, zoomControl: !nmpz,
+    scrollwheel: !nmpz, disableDoubleClickZoom: !canMove
+  });
+  $('#pano-block').hidden = !nmpz;
+  $('#btn-return').hidden = !canMove;
 }
 function returnToStart() {
   if (!svPano || !startPano) return;
@@ -484,12 +522,74 @@ function renderReveal(msg) {
   $('#reveal-wait').hidden = me.isHost;
 }
 
+// put a guess on the copy of the world nearest the answer so lines take the short way
+function nearLng(lng, ref) {
+  while (lng - ref > 180) lng -= 360;
+  while (lng - ref < -180) lng += 360;
+  return lng;
+}
+const numIcon = (n) => L.divIcon({ className: '', html: `<span class="num-pin">${n}</span>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+const dotHtml = (color) => `<span class="dot" style="--c:${COLORS[color]};display:inline-block"></span>`;
+
 function renderFinal(msg) {
   show('final');
-  $('#final-list').innerHTML = msg.standings.map((s) =>
-    `<li><span class="dot" style="--c:${COLORS[s.color]};display:inline-block"></span> ${esc(s.name)}${s.id === me.id ? ' (you)' : ''}: <strong>${s.total.toLocaleString()}</strong> pts</li>`).join('');
+  const rounds = msg.rounds || [];
+  const players = msg.standings;
+  $('#final-list').innerHTML = players.map((s) =>
+    `<li>${dotHtml(s.color)} ${esc(s.name)}${s.id === me.id ? ' (you)' : ''}: <strong>${s.total.toLocaleString()}</strong> pts</li>`).join('');
+
+  // map: every round's location (numbered) plus every player's guess
+  finalLayer.clearLayers();
+  finalBounds = [];
+  const all = [];
+  rounds.forEach((r, i) => {
+    const goal = L.latLng(r.answer.lat, r.answer.lng);
+    const pts = [goal];
+    for (const x of r.results) {
+      if (!x.guess) continue;
+      const g = L.latLng(x.guess.lat, nearLng(x.guess.lng, goal.lng));
+      pts.push(g);
+      L.polyline([g, goal], { color: COLORS[x.color], weight: 2, opacity: 0.85, dashArray: '4 6' }).addTo(finalLayer);
+      L.circleMarker(g, { radius: 6, color: '#fff', weight: 2, fillColor: COLORS[x.color], fillOpacity: 1 })
+        .addTo(finalLayer).bindTooltip(`${esc(x.name)}, round ${r.n}: ${fmtDist(x.dist)}, ${x.score.toLocaleString()} pts`);
+    }
+    L.marker(goal, { icon: numIcon(r.n), zIndexOffset: 1000 }).addTo(finalLayer)
+      .bindTooltip(`Round ${r.n}: ${esc(r.answer.title)}`)
+      .on('click', () => focusRound(i));
+    finalBounds[i] = L.latLngBounds(pts);
+    all.push(...pts);
+  });
+  finalAllBounds = all.length ? L.latLngBounds(all) : null;
+  setTimeout(() => focusRound(-1), 50);
+
+  // table: one row per round, one column per player
+  const multi = players.length > 1;
+  let h = `<thead><tr><th>Round</th>${players.map((p) => `<th>${dotHtml(p.color)} ${esc(p.name)}</th>`).join('')}</tr></thead><tbody>`;
+  rounds.forEach((r, i) => {
+    const best = Math.max(0, ...r.results.map((x) => x.score));
+    h += `<tr class="round-row" data-i="${i}"><td><strong>${r.n}</strong><span class="muted small place" title="${esc(r.answer.title)}">${esc(r.answer.title)}</span></td>`;
+    h += players.map((p) => {
+      const x = r.results.find((y) => y.id === p.id);
+      if (!x) return '<td class="muted">-</td>';
+      const cls = multi && best > 0 && x.score === best ? ' class="best"' : '';
+      return `<td${cls}>${x.score.toLocaleString()}<div class="muted small">${x.guess ? fmtDist(x.dist) : 'no guess'}</div></td>`;
+    }).join('');
+    h += '</tr>';
+  });
+  h += `</tbody><tfoot><tr><th>Total</th>${players.map((p) => `<th>${p.total.toLocaleString()}</th>`).join('')}</tr></tfoot>`;
+  $('#final-breakdown').innerHTML = h;
+
   $('#btn-again').hidden = !me.isHost;
   $('#final-wait').hidden = me.isHost;
+}
+function focusRound(i) {
+  finalMap.invalidateSize();
+  document.querySelectorAll('#final-breakdown .round-row').forEach((tr) => tr.classList.toggle('active', Number(tr.dataset.i) === i));
+  $('#btn-show-all').hidden = i < 0;
+  const b = i >= 0 ? finalBounds[i] : finalAllBounds;
+  if (!b) return;
+  if (b.getNorthEast().equals(b.getSouthWest())) finalMap.setView(b.getCenter(), 6);
+  else finalMap.fitBounds(b, { padding: [40, 40], maxZoom: 12 });
 }
 
 /* ---------------- networking ---------------- */
@@ -506,7 +606,7 @@ function resetAll() {
   if (hostConn) { try { hostConn.close(); } catch { /* ignore */ } hostConn = null; }
   if (peer) { try { peer.destroy(); } catch { /* ignore */ } peer = null; }
   game.players.clear(); game.guesses.clear(); game.used.clear();
-  game.phase = 'lobby'; game.roundNo = 0; game.next = null; game.code = null; game.lastReveal = null;
+  game.phase = 'lobby'; game.roundNo = 0; game.next = null; game.code = null; game.lastReveal = null; game.lastFinal = null; game.history = [];
   view.players = []; view.round = null; view.code = null;
   me.isHost = false; me.solo = false; me.id = 'host';
 }
@@ -595,6 +695,11 @@ function init() {
   $('#btn-start').onclick = () => { if (me.isHost) hostStart(); };
   $('#btn-leave').onclick = () => { history.replaceState(null, '', location.pathname); goHome(); };
   $('#btn-guess').onclick = submitGuess;
+  $('#final-breakdown').addEventListener('click', (e) => {
+    const tr = e.target.closest('.round-row');
+    if (tr) focusRound(Number(tr.dataset.i));
+  });
+  $('#btn-show-all').onclick = () => focusRound(-1);
   $('#btn-return').onclick = returnToStart;
   const mm = $('#minimap');
   mm.addEventListener('mouseenter', () => setMinimap(true));
@@ -615,12 +720,10 @@ function init() {
   };
   const syncSettings = () => {
     if (!me.isHost) return;
-    game.settings.rounds = Number($('#set-rounds').value);
-    game.settings.time = Number($('#set-time').value);
+    readSettings();
     broadcastPlayers();
   };
-  $('#set-rounds').onchange = syncSettings;
-  $('#set-time').onchange = syncSettings;
+  for (const id of SETTING_IDS) $('#set-' + id).onchange = syncSettings;
   window.addEventListener('keydown', (e) => {
     if (e.key === ' ' && !$('#screen-game').hidden && !$('#btn-guess').disabled) { e.preventDefault(); submitGuess(); }
   });

@@ -63,6 +63,23 @@
               <option value="60">60 s</option><option value="90" selected>90 s</option><option value="120">2 min</option>
             </select>
           </label>
+          <label class="field"><span>Movement</span>
+            <select id="set-move">
+              <option value="move" selected>Moving allowed</option>
+              <option value="nomove">No moving</option>
+              <option value="nmpz">No move, pan or zoom</option>
+            </select>
+          </label>
+          <label class="field"><span>Region</span>
+            <select id="set-region">
+              <option value="world" selected>Whole world</option><option value="europe">Europe</option>
+              <option value="americas">Americas</option><option value="asia">Asia &amp; Middle East</option>
+              <option value="africa">Africa</option><option value="oceania">Oceania</option>
+            </select>
+          </label>
+          <label class="field"><span>Compass</span>
+            <select id="set-compass"><option value="on" selected>Shown</option><option value="off">Hidden</option></select>
+          </label>
         </div>
         <p id="lobby-wait" class="muted" hidden>Waiting for the host to start…</p>
         <div class="btn-row">
@@ -75,6 +92,7 @@
     <!-- GAME -->
     <section id="screen-game" class="screen game" hidden>
       <div id="pano" aria-label="Street-level view of the mystery location"></div>
+      <div id="pano-block" class="pano-block" hidden></div>
       <div id="pano-loading" class="overlay"><div class="spinner"></div><p>Dropping you somewhere on Earth…</p></div>
       <ul id="game-players" class="player-pills"></ul>
       <div class="pano-tools">
@@ -104,16 +122,23 @@
     </section>
 
     <!-- FINAL -->
-    <section id="screen-final" class="screen card-screen" hidden>
-      <div class="card">
+    <section id="screen-final" class="screen reveal final" hidden>
+      <div id="final-map" class="map"></div>
+      <aside class="reveal-side">
         <h2>Final results</h2>
         <ol id="final-list" class="final-list"></ol>
+        <div class="breakdown-head">
+          <h3 class="small muted">Round by round</h3>
+          <button id="btn-show-all" class="btn btn-small" hidden>Show all rounds</button>
+        </div>
+        <div class="table-wrap"><table id="final-breakdown" class="results breakdown"></table></div>
+        <p class="muted small">Tap a round to zoom the map to it.</p>
         <div class="btn-row">
           <button id="btn-home" class="btn">Home</button>
           <button id="btn-again" class="btn btn-primary">Play again</button>
         </div>
         <p id="final-wait" class="muted" hidden>The host can start another game.</p>
-      </div>
+      </aside>
     </section>
   </main>
 
