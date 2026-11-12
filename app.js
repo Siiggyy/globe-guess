@@ -306,6 +306,7 @@ async function getPano() {
         svPano.setPano(startPano.pano);
       }
     });
+    svPano.addListener('pov_changed', updateCompass);
     svPano.addListener('status_changed', () => {
       if (svPano.getStatus() === 'OK') $('#pano-loading').hidden = true;
     });
@@ -731,11 +732,25 @@ function applyRestrictions(p, msg) {
   const nmpz = move === 'nmpz';
   p.setOptions({
     linksControl: canMove, clickToGo: canMove, keyboardShortcuts: !nmpz && canMove,
-    panControl: msg.compass !== 'off' && !nmpz, zoomControl: !nmpz,
+    panControl: false, zoomControl: !nmpz, // our own compass replaces Google's
     scrollwheel: !nmpz, disableDoubleClickZoom: !canMove
   });
   $('#pano-block').hidden = !nmpz;
+  $('#compass').hidden = msg.compass === 'off';
+  $('#compass').disabled = nmpz;
+  updateCompass();
   $('#btn-return').hidden = !canMove;
+}
+function updateCompass() {
+  if (!svPano) return;
+  const pov = svPano.getPov && svPano.getPov();
+  const h = pov && isFinite(pov.heading) ? pov.heading : 0;
+  $('#compass').style.setProperty('--h', h.toFixed(1));
+}
+function faceNorth() {
+  if (!svPano || $('#compass').disabled) return;
+  const pov = svPano.getPov() || {};
+  svPano.setPov({ heading: 0, pitch: pov.pitch || 0 });
 }
 function returnToStart() {
   if (!svPano || !startPano) return;
@@ -1204,6 +1219,7 @@ function init() {
   $('#btn-podium-skip').onclick = () => finishPodium(false);
   $('#btn-podium-done').onclick = closePodium;
   $('#btn-return').onclick = returnToStart;
+  $('#compass').onclick = faceNorth;
   const mm = $('#minimap');
   mm.addEventListener('mouseenter', () => setMinimap(true));
   mm.addEventListener('mouseleave', () => { minimapTimer = setTimeout(() => setMinimap(false), 400); });

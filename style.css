@@ -252,3 +252,27 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 .stat-all { margin-top: 16px; }
 .stat-all summary { cursor: pointer; font-weight: 600; }
 .reveal-you .small { margin-top: 4px; }
+
+/* compass: rotates with the view so N always points north */
+.compass {
+  --h: 0;
+  position: absolute; top: 12px; right: 64px; z-index: 6;
+  width: 76px; height: 76px; padding: 0; border-radius: 50%; cursor: pointer;
+  background: rgba(10,16,14,.72); border: 2px solid rgba(255,255,255,.35); backdrop-filter: blur(6px);
+  box-shadow: 0 4px 14px rgba(0,0,0,.4);
+}
+.compass:disabled { cursor: default; }
+.compass-rose { position: absolute; inset: 0; transform: rotate(calc(var(--h) * -1deg)); }
+.cd {
+  position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px;
+  display: flex; align-items: center; justify-content: center;
+  font: 800 15px/1 system-ui, sans-serif; color: rgba(255,255,255,.75);
+}
+/* place each letter on the ring, then turn it back upright */
+.cd.n { transform: rotate(0deg) translateY(-25px) rotate(calc(var(--h) * 1deg)); color: #ff4d3d; font-size: 18px; }
+.cd.e { transform: rotate(90deg) translateY(-25px) rotate(calc(-90deg + var(--h) * 1deg)); font-size: 12px; }
+.cd.s { transform: rotate(180deg) translateY(-25px) rotate(calc(-180deg + var(--h) * 1deg)); color: #fff; font-size: 16px; }
+.cd.w { transform: rotate(270deg) translateY(-25px) rotate(calc(-270deg + var(--h) * 1deg)); font-size: 12px; }
+.needle { position: absolute; left: 50%; top: 50%; width: 6px; height: 34px; margin: -17px 0 0 -3px;
+  background: linear-gradient(#ff4d3d 0 50%, #e8ecea 50% 100%); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
+@media (max-width: 820px) { .compass { width: 64px; height: 64px; right: 58px; top: 10px; } .cd { font-size: 13px; } }
