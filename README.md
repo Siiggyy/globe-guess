@@ -24,7 +24,6 @@ Each round loads one Street View panorama per player. Google gives a free monthl
 
 ## Run locally
 Paste your key into your local copy of `config.js` (don't commit it), then start any static server:
-Any static server works:
 
 ```bash
 python3 -m http.server 8000
