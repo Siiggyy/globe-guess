@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Globe Guess</title>
+  <meta name="description" content="Look at a photo, guess where on Earth it was taken. Play solo or with friends.">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Globe Guess home"><span class="brand-dot"></span>Globe Guess</a>
+    <div class="topbar-right">
+      <span id="hud-round" class="chip" hidden></span>
+      <span id="hud-timer" class="chip chip-timer" hidden></span>
+      <span id="hud-score" class="chip" hidden></span>
+    </div>
+  </header>
+
+  <main>
+    <!-- HOME -->
+    <section id="screen-home" class="screen card-screen">
+      <div class="card">
+        <h1>Where in the world?</h1>
+        <p class="muted">Each round shows a real photo from somewhere on Earth. Drop a pin on the map. The closer your guess, the more points you get (up to 5,000 per round).</p>
+        <label class="field">
+          <span>Your name</span>
+          <input id="in-name" maxlength="20" placeholder="Explorer" autocomplete="nickname">
+        </label>
+        <div class="btn-row">
+          <button id="btn-solo" class="btn">Play solo</button>
+          <button id="btn-host" class="btn btn-primary">Host multiplayer</button>
+        </div>
+        <div class="divider"><span>or join a friend</span></div>
+        <div class="join-row">
+          <input id="in-code" maxlength="5" placeholder="ROOM CODE" autocomplete="off" spellcheck="false">
+          <button id="btn-join" class="btn">Join</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- LOBBY -->
+    <section id="screen-lobby" class="screen card-screen" hidden>
+      <div class="card">
+        <h2 id="lobby-title">Lobby</h2>
+        <div id="lobby-share" class="share" hidden>
+          <div>
+            <div class="muted small">Room code</div>
+            <div id="lobby-code" class="code"></div>
+          </div>
+          <button id="btn-copy" class="btn btn-small">Copy invite link</button>
+        </div>
+        <h3 class="small muted">Players</h3>
+        <ul id="lobby-players" class="player-list"></ul>
+        <div id="lobby-settings" class="settings">
+          <label class="field"><span>Rounds</span>
+            <select id="set-rounds"><option>3</option><option selected>5</option><option>10</option></select>
+          </label>
+          <label class="field"><span>Time per round</span>
+            <select id="set-time">
+              <option value="0">No limit</option><option value="30">30 s</option>
+              <option value="60">60 s</option><option value="90" selected>90 s</option><option value="120">2 min</option>
+            </select>
+          </label>
+        </div>
+        <p id="lobby-wait" class="muted" hidden>Waiting for the host to start…</p>
+        <div class="btn-row">
+          <button id="btn-leave" class="btn">Leave</button>
+          <button id="btn-start" class="btn btn-primary">Start game</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- GAME -->
+    <section id="screen-game" class="screen game" hidden>
+      <div class="stage">
+        <img id="photo" alt="A photo of the mystery location">
+        <div id="photo-loading" class="overlay"><div class="spinner"></div><p>Finding a place…</p></div>
+        <ul id="game-players" class="player-pills"></ul>
+      </div>
+      <div class="guess-panel">
+        <div id="guess-map" class="map"></div>
+        <button id="btn-guess" class="btn btn-primary btn-block" disabled>Place a pin on the map</button>
+      </div>
+    </section>
+
+    <!-- REVEAL -->
+    <section id="screen-reveal" class="screen reveal" hidden>
+      <div id="reveal-map" class="map"></div>
+      <aside class="reveal-side">
+        <div class="muted small" id="reveal-round"></div>
+        <h2 id="reveal-title"></h2>
+        <a id="reveal-link" target="_blank" rel="noopener">Read about it on Wikipedia ↗</a>
+        <table class="results">
+          <thead><tr><th>Player</th><th>Distance</th><th>Points</th><th>Total</th></tr></thead>
+          <tbody id="reveal-rows"></tbody>
+        </table>
+        <button id="btn-next" class="btn btn-primary btn-block">Next round</button>
+        <p id="reveal-wait" class="muted" hidden>Waiting for the host…</p>
+      </aside>
+    </section>
+
+    <!-- FINAL -->
+    <section id="screen-final" class="screen card-screen" hidden>
+      <div class="card">
+        <h2>Final results</h2>
+        <ol id="final-list" class="final-list"></ol>
+        <div class="btn-row">
+          <button id="btn-home" class="btn">Home</button>
+          <button id="btn-again" class="btn btn-primary">Play again</button>
+        </div>
+        <p id="final-wait" class="muted" hidden>The host can start another game.</p>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="locations.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
