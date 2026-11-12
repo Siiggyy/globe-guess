@@ -343,7 +343,7 @@ function hostBackToLobby() {
 /* =================================================================
  * CLIENT SIDE: what every player (including the host) sees
  * ================================================================= */
-const view = { players: [], settings: null, round: null, guessed: false, myGuess: null, deadline: 0, timerInt: null, code: null };
+const view = { players: [], settings: null, round: null, guessed: false, myGuess: null, deadline: 0, timerTotal: 0, timerInt: null, code: null };
 
 function myColor() {
   const p = view.players.find((x) => x.id === me.id);
@@ -380,6 +380,8 @@ function onMessage(msg) {
       if (!view.round) break;
       view.round.timed = true;
       view.deadline = Date.now() + msg.remaining * 1000;
+      view.timerTotal = msg.remaining * 1000;
+      flashTimer();
       clearInterval(view.timerInt);
       $('#hud-timer').hidden = false;
       tickTimer();
@@ -456,6 +458,7 @@ function startRoundView(pano, msg) {
   });
   if (msg.timed) {
     view.deadline = Date.now() + msg.remaining * 1000;
+    view.timerTotal = Math.max(msg.remaining, (view.settings && view.settings.time) || 0) * 1000;
     $('#hud-timer').hidden = false;
     tickTimer();
     view.timerInt = setInterval(tickTimer, 250);
@@ -487,10 +490,18 @@ function setMinimap(expanded) {
   m.classList.toggle('expanded', expanded);
   setTimeout(() => guessMap.invalidateSize(), 200);
 }
+function flashTimer() {
+  const el = $('#hud-timer');
+  el.classList.remove('flash');
+  void el.offsetWidth; // restart the animation
+  el.classList.add('flash');
+}
 function tickTimer() {
   const left = Math.max(0, Math.ceil((view.deadline - Date.now()) / 1000));
   const el = $('#hud-timer');
-  el.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+  $('#timer-text').textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+  const frac = view.timerTotal > 0 ? Math.max(0, Math.min(1, (view.deadline - Date.now()) / view.timerTotal)) : 0;
+  $('#timer-fill').style.width = (frac * 100).toFixed(1) + '%';
   el.classList.toggle('low', left <= 10);
   if (left === 0) {
     clearInterval(view.timerInt);

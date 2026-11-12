@@ -13,7 +13,6 @@
     <a class="brand" href="./" aria-label="Globe Guess home"><span class="brand-dot"></span>Globe Guess</a>
     <div class="topbar-right">
       <span id="hud-round" class="chip" hidden></span>
-      <span id="hud-timer" class="chip chip-timer" hidden></span>
       <span id="hud-score" class="chip" hidden></span>
     </div>
   </header>
@@ -95,6 +94,10 @@
       <div id="pano-block" class="pano-block" hidden></div>
       <div id="pano-loading" class="overlay"><div class="spinner"></div><p>Dropping you somewhere on Earth…</p></div>
       <ul id="game-players" class="player-pills"></ul>
+      <div id="hud-timer" class="big-timer" role="timer" hidden>
+        <span id="timer-text">0:00</span>
+        <div class="timer-bar"><span id="timer-fill"></span></div>
+      </div>
       <div class="pano-tools">
         <button id="btn-return" class="btn btn-glass" title="Go back to where you started">⟲ Back to start</button>
       </div>
