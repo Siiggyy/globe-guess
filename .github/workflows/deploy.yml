@@ -37,7 +37,7 @@ jobs:
       - name: Cache-bust local scripts and styles so every deploy loads fresh files
         run: |
           v="${GITHUB_SHA::8}"
-          sed -i -E "s#(src|href)=\"(style\.css|config\.js|locations\.js|countries\.js|app\.js)\"#\1=\"\2?v=${v}\"#g" index.html
+          sed -i -E "s#(src|href)=\"(style\.css|config\.js|locations\.js|countries\.js|maptiles\.js|app\.js)\"#\1=\"\2?v=${v}\"#g" index.html
           grep -q "app.js?v=${v}" index.html
 
       - uses: actions/configure-pages@v5

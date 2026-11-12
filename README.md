@@ -22,7 +22,7 @@ An original browser game. Each round drops you onto a random street somewhere on
 
 ## How it works
 - **Street View:** Google Maps JavaScript API. A random seed point from `locations.js` is jittered and the nearest official panorama is used. The key lives in `config.js`.
-- **Guess and results maps:** [Leaflet](https://leafletjs.com) with OpenStreetMap tiles, so they cost nothing.
+- **Guess and results maps:** [Leaflet](https://leafletjs.com) with free vector tiles from [OpenFreeMap](https://openfreemap.org), drawn by [MapLibre](https://maplibre.org) (`maptiles.js`). Labels use the browser language (falling back to English) with the local name underneath; if WebGL or OpenFreeMap is unavailable it falls back to OpenStreetMap raster tiles.
 
 ### Keeping Google Maps free
 Each round loads one Street View panorama per player. Google gives a free monthly allowance, and to make sure nothing is ever billed:
@@ -35,6 +35,7 @@ Each round loads one Street View panorama per player. Google gives a free monthl
 
 ## Credits
 - Country borders: [Natural Earth](https://www.naturalearthdata.com/) via [world-atlas](https://github.com/topojson/world-atlas) (`data/`), read with [d3-geo](https://github.com/d3/d3-geo) and [topojson-client](https://github.com/topojson/topojson-client) (`vendor/`)
+- Map: [OpenFreeMap](https://openfreemap.org) © [OpenMapTiles](https://www.openmaptiles.org/), data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors; [MapLibre GL JS](https://maplibre.org) and [maplibre-gl-leaflet](https://github.com/maplibre/maplibre-gl-leaflet) (`vendor/`)
 - Flags: [flag-icons](https://github.com/lipis/flag-icons) (MIT, `flags/`)
 
 ## Run locally
