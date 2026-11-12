@@ -235,7 +235,7 @@ function addBorders(map) {
     if (!geo) return;
     const layer = L.geoJSON(geo, {
       renderer: L.canvas({ padding: 0.5 }), interactive: false,
-      style: { color: '#7a3db8', weight: 1.3, opacity: 0.85 }
+      style: { color: '#6b6b6b', weight: 0.8, opacity: 0.8 }
     });
     const update = () => {
       const show = map.getZoom() <= BORDER_MAX_ZOOM;
