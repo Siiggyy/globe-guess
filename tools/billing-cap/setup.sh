@@ -50,6 +50,13 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-pubsub.iam.gserviceaccount.com" \
   --role="roles/iam.serviceAccountTokenCreator" --condition=None >/dev/null
 
+# newer projects build functions with the default compute service account, which needs this role
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role="roles/cloudbuild.builds.builder" --condition=None >/dev/null
+echo "Waiting 60 s for permissions to take effect…"
+sleep 60
+
 echo "== Deploying function (takes a few minutes)"
 gcloud functions deploy stop-billing --gen2 --region="$REGION" --runtime=python312 \
   --source="$HERE" --entry-point=stop_billing --trigger-topic="$TOPIC" \
