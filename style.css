@@ -276,3 +276,6 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 .needle { position: absolute; left: 50%; top: 50%; width: 6px; height: 34px; margin: -17px 0 0 -3px;
   background: linear-gradient(#ff4d3d 0 50%, #e8ecea 50% 100%); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); }
 @media (max-width: 820px) { .compass { width: 64px; height: 64px; right: 58px; top: 10px; } .cd { font-size: 13px; } }
+.podium-wait { color: rgba(255,255,255,.75); padding: 10px 0; }
+.name-row { display: flex; gap: 8px; }
+.name-row input { flex: 1; }

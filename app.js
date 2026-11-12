@@ -437,7 +437,10 @@ function hostOnMessage(from, msg) {
     broadcastPlayers();
     if (game.phase === 'round') sendTo(from, roundMsg);
     else if (game.phase === 'reveal' && game.lastReveal) sendTo(from, game.lastReveal);
-    else if (game.phase === 'final' && game.lastFinal) sendTo(from, game.lastFinal);
+    else if (game.phase === 'final' && game.lastFinal) {
+      sendTo(from, game.lastFinal);
+      if (game.podiumState !== 'playing') sendTo(from, { t: 'podium', step: game.podiumState, instant: true });
+    }
     else if (game.phase === 'loading') sendTo(from, { t: 'loading', n: game.roundNo + 1, total: totalRounds() });
   } else if (msg.t === 'guess') {
     if (game.phase !== 'round' || game.guesses.has(from) || !game.players.has(from)) return;
@@ -566,6 +569,7 @@ function hostFinal() {
     .map(([id, p]) => ({ id, name: p.name, color: p.color, total: p.total }))
     .sort((a, b) => b.total - a.total);
   const rounds = game.history.map((r) => ({ n: r.n, answer: r.answer, results: r.results }));
+  game.podiumState = 'playing'; // the host moves everyone on: playing -> end -> closed
   game.lastFinal = { t: 'final', standings, rounds, mode: game.settings.mode, gameId: game.id,
     settings: { rounds: game.settings.rounds, move: game.settings.move } };
   broadcast(game.lastFinal);
@@ -628,6 +632,10 @@ function onMessage(msg) {
       break;
     case 'reveal':
       renderReveal(msg);
+      break;
+    case 'podium':
+      if (msg.step === 'end') finishPodium(!msg.instant);
+      else if (msg.step === 'closed') { if (msg.instant) finishPodium(false); closePodium(); }
       break;
     case 'final':
       renderFinal(msg);
@@ -961,7 +969,7 @@ function renderFinal(msg) {
 }
 
 /* ---------------- podium ---------------- */
-let podiumRun = 0, podiumMsg = null;
+let podiumRun = 0, podiumMsg = null, podiumDone = false;
 function podiumTitle(msg) {
   const st = msg.standings;
   if (st.length === 1) return msg.mode === 'streak' ? `🔥 ${st[0].total} in a row!` : `${st[0].total.toLocaleString()} points!`;
@@ -971,6 +979,7 @@ function podiumTitle(msg) {
 function playPodium(msg) {
   const run = ++podiumRun;
   podiumMsg = msg;
+  podiumDone = false;
   const st = msg.standings;
   const solo = st.length === 1;
   const fmt = (n) => (msg.mode === 'streak' ? `🔥 ${n}` : `${n.toLocaleString()} pts`);
@@ -978,8 +987,9 @@ function playPodium(msg) {
   $('.podium').classList.toggle('solo', solo);
   $('.podium').classList.toggle('duo', st.length === 2);
   $('#podium-title').textContent = solo ? 'Your final score' : 'And the winner is…';
-  $('#btn-podium-skip').hidden = false;
+  $('#btn-podium-skip').hidden = !me.isHost;
   $('#btn-podium-done').hidden = true;
+  $('#podium-wait').hidden = true;
   $('#podium-rest').innerHTML = st.slice(3).map((s, i) =>
     `<li value="${i + 4}">${dotHtml(s.color)} ${esc(s.name)}${s.id === me.id ? ' (you)' : ''}: ${fmt(s.total)}</li>`).join('');
   const steps = [1, 2, 3].map((n) => document.querySelector('.step.p' + n));
@@ -1016,8 +1026,10 @@ function finishPodium(celebrate) {
   });
   $('#podium-title').innerHTML = podiumTitle(msg) + (msg.newBest ? '<div class="record-badge big">🎉 New personal best!</div>' : '');
   $('#btn-podium-skip').hidden = true;
-  $('#btn-podium-done').hidden = false;
-  if (celebrate) confetti();
+  $('#btn-podium-done').hidden = !me.isHost;
+  $('#podium-wait').hidden = me.isHost;
+  if (celebrate && !podiumDone) confetti();
+  podiumDone = true;
 }
 function closePodium() {
   podiumRun++;
@@ -1086,10 +1098,17 @@ function goHome() {
   renderRecords();
   show('home');
 }
+// Fun default names for players who don't type one (not saved, so each visit gets a new one)
+const NAME_ADJ = ['Curious', 'Brave', 'Sneaky', 'Lucky', 'Swift', 'Sleepy', 'Wandering', 'Clever', 'Jolly', 'Mighty',
+  'Dizzy', 'Fuzzy', 'Bold', 'Chilly', 'Cosmic', 'Happy', 'Lost', 'Noisy', 'Quiet', 'Rusty', 'Sunny', 'Wild', 'Zesty', 'Spicy'];
+const NAME_NOUN = ['Kiwi', 'Penguin', 'Llama', 'Koala', 'Yak', 'Otter', 'Toucan', 'Moose', 'Camel', 'Panda', 'Gecko',
+  'Walrus', 'Lemur', 'Puffin', 'Capybara', 'Fennec', 'Ibex', 'Narwhal', 'Alpaca', 'Wombat', 'Meerkat', 'Badger', 'Orca', 'Hedgehog'];
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const randomName = () => `${pick(NAME_ADJ)} ${pick(NAME_NOUN)}`;
 function readName() {
-  const n = $('#in-name').value.trim().slice(0, 20) || 'Explorer';
-  saveName(n);
-  me.name = n;
+  const typed = $('#in-name').value.trim().slice(0, 20);
+  if (typed) saveName(typed);
+  me.name = typed || $('#in-name').placeholder || randomName();
 }
 function requirePeerJs() {
   if (typeof window.Peer === 'function') return true;
@@ -1198,7 +1217,10 @@ function connectionLost() {
 /* ---------------- wire up ---------------- */
 function init() {
   initMaps();
-  $('#in-name').value = loadName();
+  const saved = loadName();
+  $('#in-name').value = saved === 'Explorer' ? '' : saved; // old default, now replaced by random names
+  $('#in-name').placeholder = randomName();
+  $('#btn-reroll-name').onclick = () => { $('#in-name').value = ''; saveName(''); $('#in-name').placeholder = randomName(); };
   const room = new URLSearchParams(location.search).get('room');
   if (room) $('#in-code').value = room.toUpperCase().slice(0, 5);
   Countries.load().catch(() => {}); // country borders for flags and country modes
@@ -1216,8 +1238,15 @@ function init() {
     if (tr) focusRound(Number(tr.dataset.i));
   });
   $('#btn-show-all').onclick = () => focusRound(-1);
-  $('#btn-podium-skip').onclick = () => finishPodium(false);
-  $('#btn-podium-done').onclick = closePodium;
+  // only the host moves the podium on, for everyone
+  const hostPodium = (step) => {
+    if (!me.isHost || game.phase !== 'final' || game.podiumState === 'closed') return;
+    if (step === 'end' && game.podiumState !== 'playing') return;
+    game.podiumState = step;
+    broadcast({ t: 'podium', step });
+  };
+  $('#btn-podium-skip').onclick = () => hostPodium('end');
+  $('#btn-podium-done').onclick = () => hostPodium('closed');
   $('#btn-return').onclick = returnToStart;
   $('#compass').onclick = faceNorth;
   const mm = $('#minimap');

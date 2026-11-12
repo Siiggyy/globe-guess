@@ -25,7 +25,10 @@
         <p class="muted">Each round drops you onto a random street somewhere on Earth. Look around, walk the roads, read the signs, then pin your guess on the map. The closer you are, the more points you get (up to 5,000 per round).</p>
         <label class="field">
           <span>Your name</span>
-          <input id="in-name" maxlength="20" placeholder="Explorer" autocomplete="nickname">
+          <span class="name-row">
+            <input id="in-name" maxlength="20" placeholder="" autocomplete="nickname">
+            <button id="btn-reroll-name" class="btn btn-small" type="button" title="Random name" aria-label="Pick a random name">🎲</button>
+          </span>
         </label>
         <div class="btn-row">
           <button id="btn-solo" class="btn">Play solo</button>
@@ -169,6 +172,7 @@
         <div class="podium-actions">
           <button id="btn-podium-skip" class="btn btn-glass">Skip</button>
           <button id="btn-podium-done" class="btn btn-primary" hidden>See the round breakdown</button>
+          <span id="podium-wait" class="podium-wait" hidden>Waiting for the host…</span>
         </div>
       </div>
       <div id="final-map" class="map"></div>
