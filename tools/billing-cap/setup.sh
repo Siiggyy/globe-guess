@@ -41,6 +41,8 @@ gcloud billing accounts add-iam-policy-binding "$BILLING_ACCOUNT" \
   --member="serviceAccount:$SA" --role="roles/billing.admin" >/dev/null
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:$SA" --role="roles/billing.projectManager" --condition=None >/dev/null
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:$SA" --role="roles/browser" --condition=None >/dev/null
 # allowed to receive the Pub/Sub events
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:$SA" --role="roles/run.invoker" --condition=None >/dev/null
