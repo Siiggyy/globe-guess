@@ -222,9 +222,14 @@ function setGuessOutline(c) {
   if (c) { guessOutline = outlineLayer(c, myColor(), 0.25); if (guessOutline) guessOutline.addTo(guessMap); }
 }
 let guessMap, guessMarker = null, revealMap, revealLayer, finalMap, finalLayer, finalBounds = [], finalAllBounds = null;
+function tiles() {
+  return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  });
+}
 function initMaps() {
   guessMap = L.map('guess-map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 1);
-  BaseMap.addBaseMap(guessMap);
+  tiles().addTo(guessMap);
   guessMap.on('click', (e) => {
     if (view.guessed || !view.round) return;
     view.myGuess = e.latlng.wrap();
@@ -239,10 +244,10 @@ function initMaps() {
     }
   });
   revealMap = L.map('reveal-map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 1);
-  BaseMap.addBaseMap(revealMap);
+  tiles().addTo(revealMap);
   revealLayer = L.layerGroup().addTo(revealMap);
   finalMap = L.map('final-map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 1);
-  BaseMap.addBaseMap(finalMap);
+  tiles().addTo(finalMap);
   finalLayer = L.layerGroup().addTo(finalMap);
 }
 
