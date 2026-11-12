@@ -136,6 +136,20 @@
 
     <!-- FINAL -->
     <section id="screen-final" class="screen reveal final" hidden>
+      <div id="podium" class="podium-overlay" hidden>
+        <canvas id="confetti" aria-hidden="true"></canvas>
+        <h2 id="podium-title" class="podium-title"></h2>
+        <div class="podium">
+          <div class="step p2"><div class="step-name"></div><div class="step-score"></div><div class="step-block">2</div></div>
+          <div class="step p1"><div class="step-crown">🏆</div><div class="step-name"></div><div class="step-score"></div><div class="step-block">1</div></div>
+          <div class="step p3"><div class="step-name"></div><div class="step-score"></div><div class="step-block">3</div></div>
+        </div>
+        <ol id="podium-rest" class="podium-rest"></ol>
+        <div class="podium-actions">
+          <button id="btn-podium-skip" class="btn btn-glass">Skip</button>
+          <button id="btn-podium-done" class="btn btn-primary" hidden>See the round breakdown</button>
+        </div>
+      </div>
       <div id="final-map" class="map"></div>
       <aside class="reveal-side">
         <h2>Final results</h2>

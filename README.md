@@ -11,7 +11,8 @@ An original browser game. Each round drops you onto a random street somewhere on
 - Final summary with a map of every round and every guess, plus a round-by-round score breakdown
 - Modes: **Classic** (points by distance), **Country** (5,000 points for the right country) and **Country streak** (solo: keep going until your first wrong country)
 - Country and flag of the answer and every guess on the results, worked out offline from Natural Earth borders
-- Animated results: guess lines fly to the answer and points count up
+- Animated results: guess lines fly to the answer and points count up; the final screen reveals a podium (3rd, 2nd, then the winner with confetti)
+- In the country modes, the picked country is outlined on the map, and the results outline the right country in green
 - Rejoin: if a guest reloads or loses connection, they reconnect automatically and keep their score
 - Reveal map showing every player's guess, distances and a scoreboard
 

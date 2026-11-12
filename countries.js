@@ -57,5 +57,12 @@
     return `<img class="flag-img" src="flags/${code.toLowerCase()}.svg" alt="${code}" loading="lazy">`;
   }
 
-  window.Countries = { load, countryAt, flag, ready: () => !!features };
+  /** GeoJSON outline of a country found by countryAt (matched by code and name). */
+  function shape(c) {
+    if (!features || !c) return null;
+    const hit = features.find((x) => x.code === c.code && x.name === c.name);
+    return hit ? hit.f : null;
+  }
+
+  window.Countries = { load, countryAt, flag, shape, ready: () => !!features };
 })();

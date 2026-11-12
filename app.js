@@ -81,6 +81,15 @@ function fmtDist(km) {
 }
 
 /* ---------------- maps ---------------- */
+let guessOutline = null;
+function outlineLayer(c, color, fill) {
+  const f = Countries.shape(c);
+  return f ? L.geoJSON(f, { interactive: false, style: { color, weight: 2, fillColor: color, fillOpacity: fill } }) : null;
+}
+function setGuessOutline(c) {
+  if (guessOutline) { guessOutline.remove(); guessOutline = null; }
+  if (c) { guessOutline = outlineLayer(c, myColor(), 0.25); if (guessOutline) guessOutline.addTo(guessMap); }
+}
 let guessMap, guessMarker = null, revealMap, revealLayer, finalMap, finalLayer, finalBounds = [], finalAllBounds = null;
 function tiles() {
   return L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -100,6 +109,7 @@ function initMaps() {
     if (isCountryMode(view.round.mode) && Countries.ready()) {
       const c = Countries.countryAt(view.myGuess.lat, view.myGuess.lng, true);
       $('#btn-guess').innerHTML = 'Guess: ' + countryHtml(c);
+      setGuessOutline(c);
     }
   });
   revealMap = L.map('reveal-map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 1);
@@ -523,6 +533,7 @@ function startRoundView(pano, msg) {
   view.guessed = false;
   view.myGuess = null;
   if (guessMarker) { guessMarker.remove(); guessMarker = null; }
+  setGuessOutline(null);
   guessMap.setView([20, 0], 1);
   $('#btn-guess').disabled = true;
   $('#btn-guess').textContent = isCountryMode(msg.mode) ? 'Pin the country on the map' : 'Place a pin on the map';
@@ -531,6 +542,7 @@ function startRoundView(pano, msg) {
     view.myGuess = L.latLng(msg.myGuess.lat, msg.myGuess.lng);
     guessMarker = L.marker(view.myGuess, { icon: pinIcon(myColor()) }).addTo(guessMap);
     $('#btn-guess').textContent = 'Waiting for other players…';
+    if (isCountryMode(msg.mode)) Countries.load().then(() => setGuessOutline(Countries.countryAt(msg.myGuess.lat, msg.myGuess.lng, true))).catch(() => {});
   }
   $('#pano-loading').hidden = false;
   if (isCountryMode(msg.mode)) Countries.load().catch(() => {});
@@ -623,6 +635,19 @@ function renderReveal(msg) {
 
   // map: answer first, then each guess line "flies" in from the guess to the answer
   revealLayer.clearLayers();
+  if (countryMode && Countries.ready()) {
+    const drawn = new Set();
+    for (const r of msg.results) {
+      if (!r.country || r.correct) continue;
+      const key = r.country.code + r.country.name;
+      if (drawn.has(key)) continue;
+      drawn.add(key);
+      const o = outlineLayer(r.country, COLORS[r.color], 0.15);
+      if (o) o.addTo(revealLayer);
+    }
+    const ok = c && outlineLayer(c, '#1f9d55', 0.3);
+    if (ok) ok.addTo(revealLayer);
+  }
   const goal = L.latLng(msg.answer.lat, msg.answer.lng);
   L.marker(goal, { icon: pinIcon('#111', true), zIndexOffset: 1000 }).addTo(revealLayer).bindTooltip(msg.answer.title);
   const pts = [goal];
@@ -753,6 +778,96 @@ function renderFinal(msg) {
 
   $('#btn-again').hidden = !me.isHost;
   $('#final-wait').hidden = me.isHost;
+  playPodium(msg);
+}
+
+/* ---------------- podium ---------------- */
+let podiumRun = 0, podiumMsg = null;
+function podiumTitle(msg) {
+  const st = msg.standings;
+  if (st.length === 1) return msg.mode === 'streak' ? `🔥 ${st[0].total} in a row!` : `${st[0].total.toLocaleString()} points!`;
+  if (st[1] && st[1].total === st[0].total) return '🤝 It\'s a tie!';
+  return `🏆 ${esc(st[0].name)} wins!`;
+}
+function playPodium(msg) {
+  const run = ++podiumRun;
+  podiumMsg = msg;
+  const st = msg.standings;
+  const solo = st.length === 1;
+  const fmt = (n) => (msg.mode === 'streak' ? `🔥 ${n}` : `${n.toLocaleString()} pts`);
+  $('#podium').hidden = false;
+  $('.podium').classList.toggle('solo', solo);
+  $('.podium').classList.toggle('duo', st.length === 2);
+  $('#podium-title').textContent = solo ? 'Your final score' : 'And the winner is…';
+  $('#btn-podium-skip').hidden = false;
+  $('#btn-podium-done').hidden = true;
+  $('#podium-rest').innerHTML = st.slice(3).map((s, i) =>
+    `<li value="${i + 4}">${dotHtml(s.color)} ${esc(s.name)}${s.id === me.id ? ' (you)' : ''}: ${fmt(s.total)}</li>`).join('');
+  const steps = [1, 2, 3].map((n) => document.querySelector('.step.p' + n));
+  steps.forEach((el, i) => {
+    const s = st[i];
+    el.hidden = !s;
+    el.classList.remove('shown');
+    if (!s) return;
+    el.querySelector('.step-name').innerHTML = `${dotHtml(s.color)} ${esc(s.name)}${s.id === me.id ? ' (you)' : ''}`;
+    el.querySelector('.step-score').textContent = fmt(0);
+  });
+  // reveal 3rd, then 2nd, then the winner
+  const order = [2, 1, 0].filter((i) => st[i]);
+  let t = 700;
+  order.forEach((i) => {
+    setTimeout(() => {
+      if (run !== podiumRun) return;
+      steps[i].classList.add('shown');
+      countUp(steps[i].querySelector('.step-score'), 0, st[i].total, i === 0 ? 1800 : 1100, fmt);
+      if (i === 0) setTimeout(() => { if (run === podiumRun) finishPodium(true); }, 1900);
+    }, t);
+    t += 1900;
+  });
+}
+function finishPodium(celebrate) {
+  const msg = podiumMsg;
+  if (!msg) return;
+  podiumRun++; // cancel pending steps
+  const fmt = (n) => (msg.mode === 'streak' ? `🔥 ${n}` : `${n.toLocaleString()} pts`);
+  msg.standings.slice(0, 3).forEach((s, i) => {
+    const el = document.querySelector('.step.p' + (i + 1));
+    el.classList.add('shown');
+    el.querySelector('.step-score').textContent = fmt(s.total);
+  });
+  $('#podium-title').innerHTML = podiumTitle(msg);
+  $('#btn-podium-skip').hidden = true;
+  $('#btn-podium-done').hidden = false;
+  if (celebrate) confetti();
+}
+function closePodium() {
+  podiumRun++;
+  $('#podium').hidden = true;
+  setTimeout(() => focusRound(-1), 30);
+}
+function confetti() {
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const cv = $('#confetti');
+  const ctx = cv.getContext && cv.getContext('2d');
+  if (!ctx) return;
+  const W = (cv.width = cv.clientWidth), H = (cv.height = cv.clientHeight);
+  const cols = ['#ffd23f', '#3fb68a', '#e4572e', '#2e86ab', '#ff6f91', '#ffffff'];
+  const ps = Array.from({ length: 160 }, () => ({
+    x: W / 2 + (Math.random() - 0.5) * 120, y: H * 0.45, vx: (Math.random() - 0.5) * 14, vy: -Math.random() * 14 - 4,
+    r: Math.random() * 6 + 4, a: Math.random() * 6, va: (Math.random() - 0.5) * 0.4, c: cols[Math.floor(Math.random() * cols.length)]
+  }));
+  const t0 = performance.now();
+  const frame = (t) => {
+    ctx.clearRect(0, 0, W, H);
+    for (const p of ps) {
+      p.vy += 0.35; p.vx *= 0.99; p.x += p.vx; p.y += p.vy; p.a += p.va;
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.a); ctx.fillStyle = p.c;
+      ctx.fillRect(-p.r / 2, -p.r / 4, p.r, p.r / 2); ctx.restore();
+    }
+    if (t - t0 < 4000 && !$('#podium').hidden) requestAnimationFrame(frame);
+    else ctx.clearRect(0, 0, W, H);
+  };
+  requestAnimationFrame(frame);
 }
 function focusRound(i) {
   finalMap.invalidateSize();
@@ -921,6 +1036,8 @@ function init() {
     if (tr) focusRound(Number(tr.dataset.i));
   });
   $('#btn-show-all').onclick = () => focusRound(-1);
+  $('#btn-podium-skip').onclick = () => finishPodium(false);
+  $('#btn-podium-done').onclick = closePodium;
   $('#btn-return').onclick = returnToStart;
   const mm = $('#minimap');
   mm.addEventListener('mouseenter', () => setMinimap(true));
