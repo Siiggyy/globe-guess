@@ -30,3 +30,10 @@ python3 -m http.server 8000
 ```
 
 Then open http://localhost:8000.
+
+## Hard spending cap (optional)
+`tools/billing-cap/` turns off billing for the Google Cloud project once a small budget (default 1 in your billing currency) is exceeded, so nothing can ever be charged. In [Google Cloud Shell](https://shell.cloud.google.com):
+
+```bash
+git clone https://github.com/Siiggyy/globe-guess && bash globe-guess/tools/billing-cap/setup.sh YOUR_PROJECT_ID
+```
