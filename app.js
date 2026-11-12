@@ -32,6 +32,66 @@ function playerToken(code, create) {
 }
 function forgetToken(code) { try { sessionStorage.removeItem('gg-token-' + code); } catch { /* ignore */ } }
 
+/* ---------------- personal records (this browser only) ---------------- */
+function loadRecords() {
+  try { return JSON.parse(localStorage.getItem('gg-records') || '{}') || {}; } catch { return {}; }
+}
+function saveRecords(r) { try { localStorage.setItem('gg-records', JSON.stringify(r)); } catch { /* ignore */ } }
+const MOVE_LABEL = { move: '', nomove: ' · no moving', nmpz: ' · no move/pan/zoom' };
+function recordKey(mode, rounds, move) {
+  return mode === 'streak' ? `streak|${move}` : `${mode}|${rounds}|${move}`;
+}
+function recordLabel(key) {
+  const [mode, a, b] = key.split('|');
+  if (mode === 'streak') return 'Country streak' + (MOVE_LABEL[a] || '');
+  return `${mode === 'country' ? 'Country' : 'Classic'} · ${a} round${a === '1' ? '' : 's'}` + (MOVE_LABEL[b] || '');
+}
+// Each check runs once per round/game (rejoining replays messages), and celebrates only
+// when an existing record is beaten, not the very first result.
+function recordRound(msg) {
+  const mine = msg.results.find((r) => r.id === me.id);
+  if (!mine || !mine.guess || mine.dist == null || !msg.gameId) return false;
+  const r = loadRecords();
+  const tag = msg.gameId + ':' + msg.n;
+  if (r.lastRound === tag) return r.closestNew === tag;
+  r.lastRound = tag;
+  const prev = r.closest;
+  if (prev == null || mine.dist < prev) {
+    r.closest = mine.dist;
+    if (prev != null) r.closestNew = tag;
+  }
+  saveRecords(r);
+  return r.closestNew === tag;
+}
+function recordGame(msg) {
+  const mine = msg.standings.find((s) => s.id === me.id);
+  if (!mine || !msg.gameId) return false;
+  const r = loadRecords();
+  if (r.lastGame === msg.gameId) return r.bestNew === msg.gameId;
+  r.lastGame = msg.gameId;
+  r.games = (r.games || 0) + 1;
+  r.best = r.best || {};
+  const key = recordKey(msg.mode, msg.settings ? msg.settings.rounds : 0, msg.settings ? msg.settings.move : 'move');
+  const prev = r.best[key];
+  if (prev == null || mine.total > prev) {
+    r.best[key] = mine.total;
+    if (prev != null) r.bestNew = msg.gameId;
+  }
+  saveRecords(r);
+  return r.bestNew === msg.gameId;
+}
+function renderRecords() {
+  const r = loadRecords();
+  const best = Object.entries(r.best || {}).sort(([a], [b]) => a.localeCompare(b));
+  const box = $('#records');
+  if (!r.games && r.closest == null) { box.hidden = true; return; }
+  box.hidden = false;
+  const rows = best.map(([k, v]) => `<li><span>${esc(recordLabel(k))}</span><strong>${k.startsWith('streak') ? '🔥 ' + v : v.toLocaleString() + ' pts'}</strong></li>`);
+  if (r.closest != null) rows.push(`<li><span>Closest guess ever</span><strong>${fmtDist(r.closest)}</strong></li>`);
+  rows.push(`<li><span>Games played</span><strong>${r.games || 0}</strong></li>`);
+  $('#records-list').innerHTML = rows.join('');
+}
+
 /* ---------------- UI helpers ---------------- */
 const SCREENS = ['home', 'lobby', 'game', 'reveal', 'final'];
 function show(name) {
@@ -186,9 +246,11 @@ async function fetchLocation() {
   for (let attempt = 0; attempt < 15; attempt++) {
     const pool = window.LOCATION_REGIONS[game.settings.region] || window.LOCATION_REGIONS.world;
     const seed = pool[Math.floor(Math.random() * pool.length)];
-    const lat = seed[0] + (Math.random() - 0.5) * 0.6;
-    const lng = seed[1] + (Math.random() - 0.5) * 0.6;
-    const req = { location: { lat, lng }, radius: 15000, preference: lib.StreetViewPreference.NEAREST };
+    const rural = seed[2] === 1; // countryside seeds are spread over a wider area
+    const spread = rural ? 1.8 : 0.6;
+    const lat = Math.max(-85, Math.min(85, seed[0] + (Math.random() - 0.5) * spread));
+    const lng = seed[1] + (Math.random() - 0.5) * spread / Math.max(0.3, Math.cos(seed[0] * Math.PI / 180));
+    const req = { location: { lat, lng }, radius: rural ? 30000 : 15000, preference: lib.StreetViewPreference.NEAREST };
     if (lib.StreetViewSource && lib.StreetViewSource.GOOGLE) req.sources = [lib.StreetViewSource.GOOGLE];
     else req.source = lib.StreetViewSource.OUTDOOR;
     try {
@@ -324,6 +386,7 @@ async function hostStart() {
   }
   game.roundNo = 0;
   game.lastReveal = null;
+  game.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   game.used.clear();
   game.history = [];
   game.lastFinal = null;
@@ -393,7 +456,7 @@ function hostReveal() {
   }).sort((x, y) => y.score - x.score || (x.dist ?? 1e9) - (y.dist ?? 1e9));
   const last = mode === 'streak' ? !results.some((r) => r.correct) : game.roundNo >= game.settings.rounds;
   game.lastReveal = {
-    t: 'reveal', n: game.roundNo, total: totalRounds(), mode,
+    t: 'reveal', n: game.roundNo, total: totalRounds(), mode, gameId: game.id,
     answer: { lat: a.lat, lng: a.lng, title: a.title, url: a.url, country: a.country || null },
     results, last
   };
@@ -407,7 +470,8 @@ function hostFinal() {
     .map(([id, p]) => ({ id, name: p.name, color: p.color, total: p.total }))
     .sort((a, b) => b.total - a.total);
   const rounds = game.history.map((r) => ({ n: r.n, answer: r.answer, results: r.results }));
-  game.lastFinal = { t: 'final', standings, rounds, mode: game.settings.mode };
+  game.lastFinal = { t: 'final', standings, rounds, mode: game.settings.mode, gameId: game.id,
+    settings: { rounds: game.settings.rounds, move: game.settings.move } };
   broadcast(game.lastFinal);
 }
 function hostBackToLobby() {
@@ -685,7 +749,9 @@ function renderReveal(msg) {
     if (!mine.guess) sub = 'No guess this round';
     else if (countryMode) sub = (mine.correct ? '✅ Right country: ' : '❌ You picked ') + countryHtml(mine.country);
     else sub = `${fmtDist(mine.dist)} away · ${countryHtml(mine.country)}`;
-    you.innerHTML = `<div class="you-points" id="you-points">0</div><div class="you-sub">${sub}</div>`;
+    const closest = msg.mode === 'classic' && recordRound(msg);
+    you.innerHTML = `<div class="you-points" id="you-points">0</div><div class="you-sub">${sub}</div>` +
+      (closest ? '<div class="record-badge">🎉 Your closest guess ever!</div>' : '');
     you.className = 'reveal-you' + (countryMode ? (mine.correct ? ' good' : ' bad') : '');
     const unit = msg.mode === 'streak' ? (n) => (mine.correct ? `🔥 Streak ${n}` : `Streak over at ${n}`) : (n) => `+${n.toLocaleString()} pts`;
     const target = msg.mode === 'streak' ? mine.total : mine.score;
@@ -726,6 +792,7 @@ function dotHtml(color) { return `<span class="dot" style="--c:${COLORS[color]};
 
 function renderFinal(msg) {
   show('final');
+  msg.newBest = recordGame(msg);
   const rounds = msg.rounds || [];
   const players = msg.standings;
   const countryMode = isCountryMode(msg.mode);
@@ -835,7 +902,7 @@ function finishPodium(celebrate) {
     el.classList.add('shown');
     el.querySelector('.step-score').textContent = fmt(s.total);
   });
-  $('#podium-title').innerHTML = podiumTitle(msg);
+  $('#podium-title').innerHTML = podiumTitle(msg) + (msg.newBest ? '<div class="record-badge big">🎉 New personal best!</div>' : '');
   $('#btn-podium-skip').hidden = true;
   $('#btn-podium-done').hidden = false;
   if (celebrate) confetti();
@@ -904,6 +971,7 @@ function resetAll() {
 }
 function goHome() {
   resetAll();
+  renderRecords();
   show('home');
 }
 function readName() {
@@ -1066,6 +1134,10 @@ function init() {
   window.addEventListener('keydown', (e) => {
     if (e.key === ' ' && !$('#screen-game').hidden && !$('#btn-guess').disabled) { e.preventDefault(); submitGuess(); }
   });
+  renderRecords();
+  $('#btn-reset-records').onclick = () => {
+    if (confirm('Delete all your personal records in this browser?')) { saveRecords({}); renderRecords(); }
+  };
   show('home');
   loadGoogle().catch((e) => toast(e.message)); // load the script early; no panorama is created yet
   // came back to a room this tab was playing in (e.g. after a reload): rejoin automatically

@@ -227,3 +227,16 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
   .step-score { font-size: 1.05rem; }
 }
 @media (prefers-reduced-motion: reduce) { .step, .step-crown { transition: none; } }
+
+/* personal records */
+.records { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.records-head { display: flex; align-items: baseline; justify-content: space-between; }
+.records-head h3 { font-size: 1rem; margin: 0 0 6px; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--muted); font: inherit; font-size: .8rem; cursor: pointer; text-decoration: underline; }
+.records ul { list-style: none; margin: 0; padding: 0; font-size: .9rem; }
+.records li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.records li:last-child { border-bottom: 0; }
+.records li span { color: var(--muted); }
+.record-badge { display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px; background: #ffd23f; color: #3a2d00; font-weight: 700; font-size: .85rem; }
+.record-badge.big { display: block; width: max-content; margin: 10px auto 0; font-size: 1rem; animation: badge-pop .6s cubic-bezier(.2,1.6,.4,1); }
+@keyframes badge-pop { from { transform: scale(.3); opacity: 0; } to { transform: none; opacity: 1; } }
