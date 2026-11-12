@@ -227,6 +227,25 @@ function tiles() {
     maxZoom: 18, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
   });
 }
+// Clear country borders on top of the map while zoomed out (OSM's own are faint there).
+const BORDER_MAX_ZOOM = 6;
+function addBorders(map) {
+  Countries.load().then(() => {
+    const geo = Countries.borderLines();
+    if (!geo) return;
+    const layer = L.geoJSON(geo, {
+      renderer: L.canvas({ padding: 0.5 }), interactive: false,
+      style: { color: '#7a3db8', weight: 1.3, opacity: 0.85 }
+    });
+    const update = () => {
+      const show = map.getZoom() <= BORDER_MAX_ZOOM;
+      if (show && !map.hasLayer(layer)) layer.addTo(map);
+      else if (!show && map.hasLayer(layer)) map.removeLayer(layer);
+    };
+    map.on('zoomend', update);
+    update();
+  }).catch(() => { /* borders are optional */ });
+}
 function initMaps() {
   guessMap = L.map('guess-map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 1);
   tiles().addTo(guessMap);
@@ -249,6 +268,7 @@ function initMaps() {
   finalMap = L.map('final-map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 1);
   tiles().addTo(finalMap);
   finalLayer = L.layerGroup().addTo(finalMap);
+  for (const m of [guessMap, revealMap, finalMap]) addBorders(m);
 }
 
 /* ---------------- geo + scoring ---------------- */

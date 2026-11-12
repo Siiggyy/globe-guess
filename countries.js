@@ -4,6 +4,7 @@
  * and d3-geo's spherical point-in-polygon test. No network calls besides loading the file. */
 (function () {
   let features = null;
+  let topology = null;
   let loading = null;
 
   function load() {
@@ -12,6 +13,7 @@
       loading = fetch('data/countries-50m.json')
         .then((r) => { if (!r.ok) throw new Error('countries ' + r.status); return r.json(); })
         .then((topo) => {
+          topology = topo;
           features = topojson.feature(topo, topo.objects.countries).features
             .map((f) => ({ f, code: f.properties.c, name: f.properties.n, bounds: d3.geoBounds(f) }));
           return features;
@@ -64,5 +66,20 @@
     return hit ? hit.f : null;
   }
 
-  window.Countries = { load, countryAt, flag, shape, ready: () => !!features };
+  /** Land borders between countries (no coastlines) as GeoJSON, repeated left and right of the
+   *  main world so they also show on the wrapped copies of the map. */
+  let borders = null;
+  function borderLines() {
+    if (!topology) return null;
+    if (borders) return borders;
+    const mesh = topojson.mesh(topology, topology.objects.countries, (a, b) => a !== b);
+    const lines = [];
+    for (const shift of [-360, 0, 360]) {
+      for (const line of mesh.coordinates) lines.push(line.map(([x, y]) => [x + shift, y]));
+    }
+    borders = { type: 'MultiLineString', coordinates: lines };
+    return borders;
+  }
+
+  window.Countries = { load, countryAt, flag, shape, borderLines, ready: () => !!features };
 })();
