@@ -84,47 +84,72 @@ function scoreFor(km) {
   return Math.round(5000 * Math.exp(-km / 2000));
 }
 
-/* ---------------- locations from Wikipedia ---------------- */
-function isPhoto(p) {
-  const n = (p.pageimage || '') + ' ' + p.thumbnail.source;
-  if (/\.svg|\.gif/i.test(n)) return false;
-  if (/(flag|coat_of_arms|logo|locator|map|seal|emblem|diagram|chart|icon|signature|banner|portrait)/i.test(n)) return false;
-  return /\.jpe?g/i.test(n) && (p.thumbnail.width || 0) >= 640;
-}
-function preload(src) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const t = setTimeout(() => reject(new Error('timeout')), 10000);
-    img.onload = () => { clearTimeout(t); resolve(); };
-    img.onerror = () => { clearTimeout(t); reject(new Error('img')); };
-    img.src = src;
+/* ---------------- Google Street View ---------------- */
+let googleReady = null;
+function loadGoogle() {
+  if (googleReady) return googleReady;
+  googleReady = new Promise((resolve, reject) => {
+    const key = (window.GG_CONFIG && window.GG_CONFIG.googleMapsKey) || '';
+    if (!key) { reject(new Error('No Google Maps key in config.js')); return; }
+    window.__ggGoogleInit = resolve;
+    window.gm_authFailure = () => toast('Google Maps rejected the API key (check key restrictions or the daily quota).');
+    const s = document.createElement('script');
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key) + '&v=weekly&loading=async&callback=__ggGoogleInit';
+    s.async = true;
+    s.onerror = () => { googleReady = null; reject(new Error('Could not load Google Maps')); };
+    document.head.appendChild(s);
   });
+  return googleReady;
+}
+let svLib = null, svService = null, svPano = null;
+async function getStreetView() {
+  if (svLib) return svLib;
+  await loadGoogle();
+  svLib = await google.maps.importLibrary('streetView');
+  svService = new svLib.StreetViewService();
+  return svLib;
+}
+// One panorama object for the whole session; each round just switches its pano id.
+async function getPano() {
+  const lib = await getStreetView();
+  if (!svPano) {
+    svPano = new lib.StreetViewPanorama($('#pano'), {
+      addressControl: false, showRoadLabels: false, fullscreenControl: false,
+      motionTracking: false, motionTrackingControl: false, enableCloseButton: false,
+      linksControl: true, panControl: true, zoomControl: true, clickToGo: true, scrollwheel: true
+    });
+    svPano.addListener('status_changed', () => {
+      if (svPano.getStatus() === 'OK') $('#pano-loading').hidden = true;
+    });
+  }
+  return svPano;
 }
 async function fetchLocation() {
-  for (let attempt = 0; attempt < 10; attempt++) {
+  const lib = await getStreetView();
+  for (let attempt = 0; attempt < 15; attempt++) {
     const seed = window.LOCATIONS[Math.floor(Math.random() * window.LOCATIONS.length)];
-    const lat = seed[0] + (Math.random() - 0.5) * 0.08;
-    const lng = seed[1] + (Math.random() - 0.5) * 0.08;
-    const params = new URLSearchParams({
-      action: 'query', format: 'json', origin: '*',
-      generator: 'geosearch', ggscoord: `${lat}|${lng}`, ggsradius: '10000', ggslimit: '40',
-      prop: 'pageimages|coordinates', piprop: 'thumbnail|name', pithumbsize: '1280', pilimit: '40', colimit: '40'
-    });
+    const lat = seed[0] + (Math.random() - 0.5) * 0.6;
+    const lng = seed[1] + (Math.random() - 0.5) * 0.6;
+    const req = { location: { lat, lng }, radius: 15000, preference: lib.StreetViewPreference.NEAREST };
+    if (lib.StreetViewSource && lib.StreetViewSource.GOOGLE) req.sources = [lib.StreetViewSource.GOOGLE];
+    else req.source = lib.StreetViewSource.OUTDOOR;
     try {
-      const r = await fetch('https://en.wikipedia.org/w/api.php?' + params);
-      if (!r.ok) continue;
-      const j = await r.json();
-      const pages = Object.values((j.query && j.query.pages) || {}).filter((p) =>
-        p.thumbnail && p.coordinates && p.coordinates[0] && !game.used.has(p.pageid) && isPhoto(p));
-      if (!pages.length) continue;
-      const p = pages[Math.floor(Math.random() * pages.length)];
-      await preload(p.thumbnail.source);
+      const { data } = await svService.getPanorama(req);
+      const loc = data && data.location;
+      if (!loc || !loc.pano || game.used.has(loc.pano)) continue;
+      if (!data.links || data.links.length === 0) continue; // skip dead-end single photos
       return {
-        pageid: p.pageid, title: p.title, img: p.thumbnail.source,
-        lat: p.coordinates[0].lat, lng: p.coordinates[0].lon,
-        url: 'https://en.wikipedia.org/?curid=' + p.pageid
+        pageid: loc.pano, pano: loc.pano,
+        lat: loc.latLng.lat(), lng: loc.latLng.lng(),
+        title: loc.description || 'Mystery location',
+        heading: Math.floor(Math.random() * 360),
+        url: 'https://www.google.com/maps/@?api=1&map_action=pano&pano=' + encodeURIComponent(loc.pano)
       };
-    } catch { /* try another seed */ }
+    } catch (e) {
+      const code = (e && (e.code || e.message)) || '';
+      if (/OVER_QUERY_LIMIT|REQUEST_DENIED/.test(code)) throw e; // quota hit or key refused: stop
+      /* ZERO_RESULTS: try another spot */
+    }
   }
   throw new Error('no location found');
 }
@@ -217,7 +242,7 @@ async function hostNextRound() {
   if (!loc || game.used.has(loc.pageid)) { try { loc = await fetchLocation(); } catch { loc = null; } }
   if (!loc) {
     game.phase = 'lobby';
-    broadcast({ t: 'error', msg: 'Could not load a location from Wikipedia. Check your connection and try again.' });
+    broadcast({ t: 'error', msg: 'Could not load a Street View location. The daily Google Maps limit may be reached, or check your connection.' });
     broadcastPlayers();
     return;
   }
@@ -236,7 +261,7 @@ async function hostNextRound() {
 function roundMsg() {
   const timed = game.settings.time > 0;
   const remaining = timed ? Math.max(0, game.settings.time - (Date.now() - game.roundStart) / 1000) : 0;
-  return { t: 'round', n: game.roundNo, total: game.settings.rounds, img: game.current.img, timed, remaining };
+  return { t: 'round', n: game.roundNo, total: game.settings.rounds, pano: game.current.pano, heading: game.current.heading, timed, remaining };
 }
 function hostReveal() {
   if (game.phase !== 'round') return;
@@ -305,7 +330,7 @@ function onMessage(msg) {
       startRoundView(null, msg);
       break;
     case 'round':
-      startRoundView(msg.img, msg);
+      startRoundView(msg.pano, msg);
       break;
     case 'reveal':
       renderReveal(msg);
@@ -343,15 +368,18 @@ function renderLobby() {
   renderPlayers();
 }
 
-function startRoundView(img, msg) {
+let startPano = null;
+function startRoundView(pano, msg) {
   show('game');
   $('#hud-round').textContent = `Round ${msg.n} / ${msg.total}`;
   clearInterval(view.timerInt);
   $('#hud-timer').hidden = true;
-  if (!img) {
+  setMinimap(false);
+  $('#minimap').classList.remove('open');
+  $('#btn-map-toggle').textContent = 'Open map';
+  if (!pano) {
     view.round = null;
-    $('#photo').removeAttribute('src');
-    $('#photo-loading').hidden = false;
+    $('#pano-loading').hidden = false;
     return;
   }
   view.round = msg;
@@ -361,17 +389,38 @@ function startRoundView(img, msg) {
   guessMap.setView([20, 0], 1);
   $('#btn-guess').disabled = true;
   $('#btn-guess').textContent = 'Place a pin on the map';
-  $('#photo-loading').hidden = false;
-  const photo = $('#photo');
-  photo.onload = () => { $('#photo-loading').hidden = true; };
-  photo.onerror = () => { $('#photo-loading').hidden = true; toast('The photo failed to load. Take your best guess!'); };
-  photo.src = img;
+  $('#pano-loading').hidden = false;
+  startPano = { pano, heading: msg.heading || 0 };
+  getPano().then((p) => {
+    p.setPano(pano);
+    p.setPov({ heading: startPano.heading, pitch: 0 });
+    p.setZoom(0);
+    p.setVisible(true);
+    setTimeout(() => { $('#pano-loading').hidden = true; }, 4000); // never block forever
+  }).catch(() => {
+    $('#pano-loading').hidden = true;
+    toast('Street View failed to load. Take your best guess!');
+  });
   if (msg.timed) {
     view.deadline = Date.now() + msg.remaining * 1000;
     $('#hud-timer').hidden = false;
     tickTimer();
     view.timerInt = setInterval(tickTimer, 250);
   }
+}
+function returnToStart() {
+  if (!svPano || !startPano) return;
+  svPano.setPano(startPano.pano);
+  svPano.setPov({ heading: startPano.heading, pitch: 0 });
+  svPano.setZoom(0);
+}
+let minimapTimer = null;
+function setMinimap(expanded) {
+  clearTimeout(minimapTimer);
+  const m = $('#minimap');
+  if (m.classList.contains('expanded') === expanded) return;
+  m.classList.toggle('expanded', expanded);
+  setTimeout(() => guessMap.invalidateSize(), 200);
 }
 function tickTimer() {
   const left = Math.max(0, Math.ceil((view.deadline - Date.now()) / 1000));
@@ -546,6 +595,16 @@ function init() {
   $('#btn-start').onclick = () => { if (me.isHost) hostStart(); };
   $('#btn-leave').onclick = () => { history.replaceState(null, '', location.pathname); goHome(); };
   $('#btn-guess').onclick = submitGuess;
+  $('#btn-return').onclick = returnToStart;
+  const mm = $('#minimap');
+  mm.addEventListener('mouseenter', () => setMinimap(true));
+  mm.addEventListener('mouseleave', () => { minimapTimer = setTimeout(() => setMinimap(false), 400); });
+  $('#btn-map-toggle').onclick = () => {
+    const open = !mm.classList.contains('open');
+    mm.classList.toggle('open', open);
+    $('#btn-map-toggle').textContent = open ? 'Back to street' : 'Open map';
+    setTimeout(() => guessMap.invalidateSize(), 50);
+  };
   $('#btn-next').onclick = () => { if (me.isHost) hostNextRound(); };
   $('#btn-again').onclick = () => { if (me.isHost) hostBackToLobby(); };
   $('#btn-home').onclick = () => { history.replaceState(null, '', location.pathname); goHome(); };
@@ -566,6 +625,7 @@ function init() {
     if (e.key === ' ' && !$('#screen-game').hidden && !$('#btn-guess').disabled) { e.preventDefault(); submitGuess(); }
   });
   show('home');
+  loadGoogle().catch((e) => toast(e.message)); // load the script early; no panorama is created yet
 }
 
 if (typeof L === 'undefined') {

@@ -23,7 +23,7 @@
     <section id="screen-home" class="screen card-screen">
       <div class="card">
         <h1>Where in the world?</h1>
-        <p class="muted">Each round shows a real photo from somewhere on Earth. Drop a pin on the map. The closer your guess, the more points you get (up to 5,000 per round).</p>
+        <p class="muted">Each round drops you onto a random street somewhere on Earth. Look around, walk the roads, read the signs, then pin your guess on the map. The closer you are, the more points you get (up to 5,000 per round).</p>
         <label class="field">
           <span>Your name</span>
           <input id="in-name" maxlength="20" placeholder="Explorer" autocomplete="nickname">
@@ -74,15 +74,17 @@
 
     <!-- GAME -->
     <section id="screen-game" class="screen game" hidden>
-      <div class="stage">
-        <img id="photo" alt="A photo of the mystery location">
-        <div id="photo-loading" class="overlay"><div class="spinner"></div><p>Finding a place…</p></div>
-        <ul id="game-players" class="player-pills"></ul>
+      <div id="pano" aria-label="Street-level view of the mystery location"></div>
+      <div id="pano-loading" class="overlay"><div class="spinner"></div><p>Dropping you somewhere on Earth…</p></div>
+      <ul id="game-players" class="player-pills"></ul>
+      <div class="pano-tools">
+        <button id="btn-return" class="btn btn-glass" title="Go back to where you started">⟲ Back to start</button>
       </div>
-      <div class="guess-panel">
+      <div id="minimap" class="minimap">
         <div id="guess-map" class="map"></div>
         <button id="btn-guess" class="btn btn-primary btn-block" disabled>Place a pin on the map</button>
       </div>
+      <button id="btn-map-toggle" class="btn btn-primary map-toggle">Open map</button>
     </section>
 
     <!-- REVEAL -->
@@ -91,7 +93,7 @@
       <aside class="reveal-side">
         <div class="muted small" id="reveal-round"></div>
         <h2 id="reveal-title"></h2>
-        <a id="reveal-link" target="_blank" rel="noopener">Read about it on Wikipedia ↗</a>
+        <a id="reveal-link" target="_blank" rel="noopener">Open this spot in Google Maps ↗</a>
         <table class="results">
           <thead><tr><th>Player</th><th>Distance</th><th>Points</th><th>Total</th></tr></thead>
           <tbody id="reveal-rows"></tbody>
@@ -119,6 +121,7 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="config.js"></script>
   <script src="locations.js"></script>
   <script src="app.js"></script>
 </body>

@@ -1,6 +1,6 @@
 # Globe Guess
 
-An original browser game. Each round shows a real photo from somewhere on Earth, and you drop a pin where you think it was taken. The closer your guess, the more points you get (up to 5,000 per round).
+An original browser game. Each round drops you onto a random street somewhere on Earth. Look around, walk the roads, then pin where you think you are on the map. The closer your guess, the more points you get (up to 5,000 per round).
 
 **Play:** https://siiggyy.github.io/globe-guess/
 
@@ -10,8 +10,13 @@ An original browser game. Each round shows a real photo from somewhere on Earth,
 - Reveal map showing every player's guess, distances and a scoreboard
 
 ## How it works
-- **Photos:** a random seed point from `locations.js`, then nearby geotagged Wikipedia articles with photos (Wikipedia API, no key needed). The article is revealed after each round.
-- **Map:** [Leaflet](https://leafletjs.com) with OpenStreetMap tiles.
+- **Street View:** Google Maps JavaScript API. A random seed point from `locations.js` is jittered and the nearest official panorama is used. The key lives in `config.js`.
+- **Guess and results maps:** [Leaflet](https://leafletjs.com) with OpenStreetMap tiles, so they cost nothing.
+
+### Keeping Google Maps free
+Each round loads one Street View panorama per player. Google gives a free monthly allowance, and to make sure nothing is ever billed:
+1. In Google Cloud Console, open **APIs & Services > Maps JavaScript API > Quotas & System Limits** and set a low per-day limit (e.g. 150).
+2. Under **Credentials**, restrict the key to `https://siiggyy.github.io/*` and to the Maps JavaScript API only.
 - **Multiplayer:** peer-to-peer over WebRTC using [PeerJS](https://peerjs.com) and its free public signaling server. The host's browser runs the game, so no backend is needed and it works on GitHub Pages. Players on very strict networks (some corporate or mobile networks) may not be able to connect without a TURN server.
 
 ## Run locally
