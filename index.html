@@ -39,6 +39,7 @@
         <div id="records" class="records" hidden>
           <div class="records-head"><h3>Your records</h3><button id="btn-reset-records" class="link-btn">Reset</button></div>
           <ul id="records-list"></ul>
+          <button id="btn-stats" class="btn btn-small btn-block">📊 Country stats</button>
         </div>
       </div>
     </section>
@@ -136,6 +137,16 @@
         <button id="btn-next" class="btn btn-primary btn-block">Next round</button>
         <p id="reveal-wait" class="muted" hidden>Waiting for the host…</p>
       </aside>
+    </section>
+
+    <!-- COUNTRY STATS -->
+    <section id="screen-stats" class="screen card-screen" hidden>
+      <div class="card stats-card">
+        <h2>Your country stats</h2>
+        <p class="muted small">Saved in this browser. "Right" means your pin was in the right country, in any game mode.</p>
+        <div id="stats-body"></div>
+        <div class="btn-row"><button id="btn-stats-back" class="btn">Back</button></div>
+      </div>
     </section>
 
     <!-- FINAL -->

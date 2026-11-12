@@ -240,3 +240,15 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 .record-badge { display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px; background: #ffd23f; color: #3a2d00; font-weight: 700; font-size: .85rem; }
 .record-badge.big { display: block; width: max-content; margin: 10px auto 0; font-size: 1rem; animation: badge-pop .6s cubic-bezier(.2,1.6,.4,1); }
 @keyframes badge-pop { from { transform: scale(.3); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* country stats */
+.records #btn-stats { margin-top: 12px; }
+.stats-card { max-width: 560px; }
+.stats-card h3 { font-size: 1rem; margin: 18px 0 6px; }
+.stats-summary { font-size: 1.05rem; }
+.stat-list { list-style: none; margin: 0; padding: 0; }
+.stat-list li { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dashed var(--line); }
+.stat-list li:last-child { border-bottom: 0; }
+.stat-all { margin-top: 16px; }
+.stat-all summary { cursor: pointer; font-weight: 600; }
+.reveal-you .small { margin-top: 4px; }

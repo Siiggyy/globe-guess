@@ -80,11 +80,82 @@ function recordGame(msg) {
   saveRecords(r);
   return r.bestNew === msg.gameId;
 }
+// Country stats: per answer country, how often you saw it, got the country right, distance, and mix-ups.
+function loadStats() {
+  try { return JSON.parse(localStorage.getItem('gg-stats') || '{}') || {}; } catch { return {}; }
+}
+function saveStats(st) { try { localStorage.setItem('gg-stats', JSON.stringify(st)); } catch { /* ignore */ } }
+function recordCountryStats(msg) {
+  const a = msg.answer.country;
+  const mine = msg.results.find((r) => r.id === me.id);
+  if (!a || !a.code || !mine || !mine.guess || !msg.gameId) return null;
+  const st = loadStats();
+  st.countries = st.countries || {};
+  const e = st.countries[a.code] || (st.countries[a.code] = { name: a.name, seen: 0, right: 0, dist: 0, mixed: {} });
+  const tag = msg.gameId + ':' + msg.n;
+  if (st.lastRound !== tag) {
+    st.lastRound = tag;
+    e.seen++;
+    e.dist += mine.dist || 0;
+    const g = mine.country;
+    if (g && g.code === a.code) e.right++;
+    else if (g && g.code) {
+      e.mixed[g.code] = (e.mixed[g.code] || 0) + 1;
+      st.names = st.names || {};
+      st.names[g.code] = g.name;
+    }
+    saveStats(st);
+  }
+  return e;
+}
+function statsName(st, code) {
+  return (st.countries && st.countries[code] && st.countries[code].name) || (st.names && st.names[code]) || code;
+}
+function renderStats() {
+  const st = loadStats();
+  const list = Object.entries(st.countries || {}).map(([code, e]) => ({ code, ...e, acc: e.right / e.seen }));
+  const total = list.reduce((n, e) => n + e.seen, 0);
+  const right = list.reduce((n, e) => n + e.right, 0);
+  const flagName = (code, name) => `${Countries.flag(code)} ${esc(name)}`;
+  if (!total) {
+    $('#stats-body').innerHTML = '<p class="muted">No rounds yet. Play a game and your country stats show up here.</p>';
+    return;
+  }
+  const row = (e) => `<li><span>${flagName(e.code, e.name)}</span><strong>${e.right}/${e.seen}</strong></li>`;
+  const known = list.filter((e) => e.seen >= 2);
+  const best = [...known].sort((x, y) => y.acc - x.acc || y.seen - x.seen).filter((e) => e.acc >= 0.5).slice(0, 5);
+  const worst = [...known].sort((x, y) => x.acc - y.acc || y.seen - x.seen).filter((e) => e.acc < 0.5).slice(0, 5);
+  // mix-ups, counted in both directions as one pair
+  const pairs = {};
+  for (const e of list) {
+    for (const [g, n] of Object.entries(e.mixed || {})) {
+      const key = [e.code, g].sort().join('|');
+      pairs[key] = (pairs[key] || 0) + n;
+    }
+  }
+  const mix = Object.entries(pairs).sort((x, y) => y[1] - x[1]).slice(0, 5);
+  const all = [...list].sort((x, y) => y.seen - x.seen || x.name.localeCompare(y.name));
+  $('#stats-body').innerHTML = `
+    <p class="stats-summary"><strong>${right}/${total}</strong> rounds in the right country (${Math.round(right / total * 100)}%) across <strong>${list.length}</strong> countries.</p>
+    ${best.length ? `<h3>Your strongest countries</h3><ul class="stat-list">${best.map(row).join('')}</ul>` : ''}
+    ${worst.length ? `<h3>Your trickiest countries</h3><ul class="stat-list">${worst.map(row).join('')}</ul>` : ''}
+    ${mix.length ? `<h3>Most mixed up</h3><ul class="stat-list">${mix.map(([k, n]) => {
+      const [x, y] = k.split('|');
+      return `<li><span>${flagName(x, statsName(st, x))} ↔ ${flagName(y, statsName(st, y))}</span><strong>${n}×</strong></li>`;
+    }).join('')}</ul>` : ''}
+    ${known.length < list.length ? '<p class="muted small">Strongest and trickiest need at least 2 rounds in a country.</p>' : ''}
+    <details class="stat-all"><summary>All countries (${list.length})</summary>
+      <table class="results"><thead><tr><th>Country</th><th>Right</th><th>Avg. distance</th></tr></thead><tbody>
+      ${all.map((e) => `<tr><td>${flagName(e.code, e.name)}</td><td>${e.right}/${e.seen}</td><td>${fmtDist(e.dist / e.seen)}</td></tr>`).join('')}
+      </tbody></table>
+    </details>`;
+}
 function renderRecords() {
   const r = loadRecords();
   const best = Object.entries(r.best || {}).sort(([a], [b]) => a.localeCompare(b));
   const box = $('#records');
-  if (!r.games && r.closest == null) { box.hidden = true; return; }
+  const hasStats = !!Object.keys(loadStats().countries || {}).length;
+  if (!r.games && r.closest == null && !hasStats) { box.hidden = true; return; }
   box.hidden = false;
   const rows = best.map(([k, v]) => `<li><span>${esc(recordLabel(k))}</span><strong>${k.startsWith('streak') ? '🔥 ' + v : v.toLocaleString() + ' pts'}</strong></li>`);
   if (r.closest != null) rows.push(`<li><span>Closest guess ever</span><strong>${fmtDist(r.closest)}</strong></li>`);
@@ -93,7 +164,7 @@ function renderRecords() {
 }
 
 /* ---------------- UI helpers ---------------- */
-const SCREENS = ['home', 'lobby', 'game', 'reveal', 'final'];
+const SCREENS = ['home', 'lobby', 'game', 'reveal', 'final', 'stats'];
 function show(name) {
   for (const s of SCREENS) $('#screen-' + s).hidden = s !== name;
   const inGame = name === 'game' || name === 'reveal';
@@ -243,13 +314,33 @@ async function getPano() {
 }
 async function fetchLocation() {
   const lib = await getStreetView();
-  for (let attempt = 0; attempt < 15; attempt++) {
+  // Avoid countries already used this game: candidates are checked offline before asking Google,
+  // and the rule is relaxed if a region runs out of new countries.
+  // once every country of the region has had its turn, start a new cycle instead of wasting lookups
+  if (Countries.ready()) {
+    const region = game.settings.region;
+    if (!game.regionCountries || game.regionCountries.region !== region) {
+      const pool = window.LOCATION_REGIONS[region] || window.LOCATION_REGIONS.world;
+      const set = new Set(pool.map((p) => { const c = Countries.countryAt(p[0], p[1], true); return c && c.code; }).filter(Boolean));
+      game.regionCountries = { region, set };
+    }
+    if ([...game.regionCountries.set].every((c) => game.usedCountries.has(c))) game.usedCountries.clear();
+  }
+  let apiCalls = 0;
+  for (let i = 0; i < 300 && apiCalls < 15; i++) {
+    const avoid = Countries.ready() && apiCalls < 10 && i < 150;
     const pool = window.LOCATION_REGIONS[game.settings.region] || window.LOCATION_REGIONS.world;
     const seed = pool[Math.floor(Math.random() * pool.length)];
     const rural = seed[2] === 1; // countryside seeds are spread over a wider area
     const spread = rural ? 1.8 : 0.6;
     const lat = Math.max(-85, Math.min(85, seed[0] + (Math.random() - 0.5) * spread));
     const lng = seed[1] + (Math.random() - 0.5) * spread / Math.max(0.3, Math.cos(seed[0] * Math.PI / 180));
+    if (avoid) {
+      // only spend a Google lookup on points that are clearly in a country not used yet
+      const pre = Countries.countryAt(lat, lng, true);
+      if (!pre || game.usedCountries.has(pre.code)) continue;
+    }
+    apiCalls++;
     const req = { location: { lat, lng }, radius: rural ? 30000 : 15000, preference: lib.StreetViewPreference.NEAREST };
     if (lib.StreetViewSource && lib.StreetViewSource.GOOGLE) req.sources = [lib.StreetViewSource.GOOGLE];
     else req.source = lib.StreetViewSource.OUTDOOR;
@@ -261,6 +352,7 @@ async function fetchLocation() {
       const plat = loc.latLng.lat(), plng = loc.latLng.lng();
       const country = Countries.ready() ? Countries.countryAt(plat, plng, true) : null;
       if (isCountryMode(game.settings.mode) && !country) continue;
+      if (avoid && country && game.usedCountries.has(country.code)) continue;
       return {
         pageid: loc.pano, pano: loc.pano, country,
         lat: plat, lng: plng,
@@ -285,7 +377,7 @@ const game = {
   settings: { mode: 'classic', rounds: 5, time: 90, move: 'move', region: 'world', compass: 'on' },
   phase: 'lobby',     // lobby | loading | round | reveal | final
   roundNo: 0, current: null, roundStart: 0,
-  guesses: new Map(), used: new Set(), timer: null, deadline: 0, next: null, lastReveal: null, lastFinal: null, history: [], code: null
+  guesses: new Map(), used: new Set(), usedCountries: new Set(), timer: null, deadline: 0, next: null, lastReveal: null, lastFinal: null, history: [], code: null
 };
 
 function broadcast(msg) {
@@ -388,6 +480,8 @@ async function hostStart() {
   game.lastReveal = null;
   game.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   game.used.clear();
+  game.usedCountries.clear();
+  game.next = null; // a prefetched location may repeat a country from the last game
   game.history = [];
   game.lastFinal = null;
   for (const p of game.players.values()) p.total = 0;
@@ -409,6 +503,7 @@ async function hostNextRound() {
     return;
   }
   game.used.add(loc.pageid);
+  if (loc.country && loc.country.code) game.usedCountries.add(loc.country.code);
   game.roundNo++;
   game.current = loc;
   game.guesses.clear();
@@ -750,6 +845,8 @@ function renderReveal(msg) {
     else if (countryMode) sub = (mine.correct ? '✅ Right country: ' : '❌ You picked ') + countryHtml(mine.country);
     else sub = `${fmtDist(mine.dist)} away · ${countryHtml(mine.country)}`;
     const closest = msg.mode === 'classic' && recordRound(msg);
+    const cs = recordCountryStats(msg);
+    if (cs && c) sub += `<div class="small">${Countries.flag(c.code)} ${esc(c.name)}: you got ${cs.right} of ${cs.seen} right so far</div>`;
     you.innerHTML = `<div class="you-points" id="you-points">0</div><div class="you-sub">${sub}</div>` +
       (closest ? '<div class="record-badge">🎉 Your closest guess ever!</div>' : '');
     you.className = 'reveal-you' + (countryMode ? (mine.correct ? ' good' : ' bad') : '');
@@ -1136,8 +1233,10 @@ function init() {
   });
   renderRecords();
   $('#btn-reset-records').onclick = () => {
-    if (confirm('Delete all your personal records in this browser?')) { saveRecords({}); renderRecords(); }
+    if (confirm('Delete all your personal records and country stats in this browser?')) { saveRecords({}); saveStats({}); renderRecords(); }
   };
+  $('#btn-stats').onclick = () => { show('stats'); renderStats(); Countries.load().then(renderStats).catch(() => {}); };
+  $('#btn-stats-back').onclick = () => { renderRecords(); show('home'); };
   show('home');
   loadGoogle().catch((e) => toast(e.message)); // load the script early; no panorama is created yet
   // came back to a room this tab was playing in (e.g. after a reload): rejoin automatically

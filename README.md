@@ -16,6 +16,8 @@ An original browser game. Each round drops you onto a random street somewhere on
 - Rejoin: if a guest reloads or loses connection, they reconnect automatically and keep their score
 - Personal records in your browser: best score per mode, rounds and movement setting, longest streak, closest guess, games played
 - About 515 starting points: cities plus countryside spots that are searched over a wider area
+- No country twice per game (until a region runs out of countries); repeats are filtered offline before any Google lookup
+- Country stats in your browser: right/seen per country, strongest and trickiest countries, most mixed-up pairs, average distance
 - Reveal map showing every player's guess, distances and a scoreboard
 
 ## How it works
