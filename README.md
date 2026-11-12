@@ -19,7 +19,11 @@ Each round loads one Street View panorama per player. Google gives a free monthl
 2. Under **Credentials**, restrict the key to `https://siiggyy.github.io/*` and to the Maps JavaScript API only.
 - **Multiplayer:** peer-to-peer over WebRTC using [PeerJS](https://peerjs.com) and its free public signaling server. The host's browser runs the game, so no backend is needed and it works on GitHub Pages. Players on very strict networks (some corporate or mobile networks) may not be able to connect without a TURN server.
 
+## Deployment
+`.github/workflows/deploy.yml` publishes the site on every push to `main`. It reads the key from the repository secret `GOOGLE_MAPS_KEY` and writes it into `config.js`, so the key never appears in the repo. Pages must be set to **Settings → Pages → Source: GitHub Actions**.
+
 ## Run locally
+Paste your key into your local copy of `config.js` (don't commit it), then start any static server:
 Any static server works:
 
 ```bash
