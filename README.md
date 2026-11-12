@@ -6,7 +6,7 @@ An original browser game. Each round drops you onto a random street somewhere on
 
 ## Features
 - **Solo** or **multiplayer** (up to 8 players) with a 5-letter room code and an invite link
-- 3, 5 or 10 rounds, with an optional per-round timer
+- 1, 3, 5 or 10 rounds, with an optional per-round timer; in multiplayer, the first player to lock in starts a 15-second countdown for everyone else
 - Game modes: moving allowed, no moving, or no move/pan/zoom; region filter (world, Europe, Americas, Asia & Middle East, Africa, Oceania); compass on or off
 - Final summary with a map of every round and every guess, plus a round-by-round score breakdown
 - Reveal map showing every player's guess, distances and a scoreboard

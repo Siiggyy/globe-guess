@@ -172,7 +172,7 @@ const game = {
   settings: { rounds: 5, time: 90, move: 'move', region: 'world', compass: 'on' },
   phase: 'lobby',     // lobby | loading | round | reveal | final
   roundNo: 0, current: null, roundStart: 0,
-  guesses: new Map(), used: new Set(), timer: null, next: null, lastReveal: null, lastFinal: null, history: [], code: null
+  guesses: new Map(), used: new Set(), timer: null, deadline: 0, next: null, lastReveal: null, lastFinal: null, history: [], code: null
 };
 
 function broadcast(msg) {
@@ -230,7 +230,13 @@ function hostOnMessage(from, msg) {
     if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90) return;
     game.guesses.set(from, { lat, lng: ((lng + 540) % 360) - 180 });
     broadcastPlayers();
-    if (allGuessed()) hostReveal();
+    if (allGuessed()) { hostReveal(); return; }
+    // multiplayer: the first lock-in starts a short countdown for everyone else
+    const left = game.deadline ? (game.deadline - Date.now()) / 1000 : Infinity;
+    if (game.players.size > 1 && game.guesses.size === 1 && left > LOCK_IN_SECONDS) {
+      setRoundDeadline(LOCK_IN_SECONDS);
+      broadcast({ t: 'timer', remaining: LOCK_IN_SECONDS, by: game.players.get(from).name });
+    }
   }
 }
 
@@ -276,14 +282,21 @@ async function hostNextRound() {
   game.phase = 'round';
   game.roundStart = Date.now();
   clearTimeout(game.timer);
-  if (game.settings.time > 0) game.timer = setTimeout(hostReveal, game.settings.time * 1000 + 1500);
+  setRoundDeadline(game.settings.time > 0 ? game.settings.time : 0);
   broadcast(roundMsg());
   broadcastPlayers();
   game.next = fetchLocation().catch(() => null); // prefetch the next round
 }
+const LOCK_IN_SECONDS = 15;
+// seconds = 0 means no time limit
+function setRoundDeadline(seconds) {
+  clearTimeout(game.timer);
+  game.deadline = seconds > 0 ? Date.now() + seconds * 1000 : 0;
+  if (seconds > 0) game.timer = setTimeout(hostReveal, seconds * 1000 + 1500); // grace for latency
+}
 function roundMsg() {
-  const timed = game.settings.time > 0;
-  const remaining = timed ? Math.max(0, game.settings.time - (Date.now() - game.roundStart) / 1000) : 0;
+  const timed = game.deadline > 0;
+  const remaining = timed ? Math.max(0, (game.deadline - Date.now()) / 1000) : 0;
   return { t: 'round', n: game.roundNo, total: game.settings.rounds, pano: game.current.pano, heading: game.current.heading, timed, remaining,
     move: game.settings.move, compass: game.settings.compass };
 }
@@ -358,6 +371,16 @@ function onMessage(msg) {
       break;
     case 'round':
       startRoundView(msg.pano, msg);
+      break;
+    case 'timer':
+      if (!view.round) break;
+      view.round.timed = true;
+      view.deadline = Date.now() + msg.remaining * 1000;
+      clearInterval(view.timerInt);
+      $('#hud-timer').hidden = false;
+      tickTimer();
+      view.timerInt = setInterval(tickTimer, 250);
+      if (!view.guessed) toast(`${msg.by} locked in. ${msg.remaining} seconds left!`);
       break;
     case 'reveal':
       renderReveal(msg);
