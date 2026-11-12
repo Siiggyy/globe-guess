@@ -9,6 +9,10 @@ An original browser game. Each round drops you onto a random street somewhere on
 - 1, 3, 5 or 10 rounds, with an optional per-round timer; in multiplayer, the first player to lock in starts a 15-second countdown for everyone else
 - Game modes: moving allowed, no moving, or no move/pan/zoom; region filter (world, Europe, Americas, Asia & Middle East, Africa, Oceania); compass on or off
 - Final summary with a map of every round and every guess, plus a round-by-round score breakdown
+- Modes: **Classic** (points by distance), **Country** (5,000 points for the right country) and **Country streak** (solo: keep going until your first wrong country)
+- Country and flag of the answer and every guess on the results, worked out offline from Natural Earth borders
+- Animated results: guess lines fly to the answer and points count up
+- Rejoin: if a guest reloads or loses connection, they reconnect automatically and keep their score
 - Reveal map showing every player's guess, distances and a scoreboard
 
 ## How it works
@@ -23,6 +27,10 @@ Each round loads one Street View panorama per player. Google gives a free monthl
 
 ## Deployment
 `.github/workflows/deploy.yml` publishes the site on every push to `main`. It reads the key from the repository secret `GOOGLE_MAPS_KEY` and writes it into `config.js`, so the key never appears in the repo. Pages must be set to **Settings → Pages → Source: GitHub Actions**.
+
+## Credits
+- Country borders: [Natural Earth](https://www.naturalearthdata.com/) via [world-atlas](https://github.com/topojson/world-atlas) (`data/`), read with [d3-geo](https://github.com/d3/d3-geo) and [topojson-client](https://github.com/topojson/topojson-client) (`vendor/`)
+- Flags: [flag-icons](https://github.com/lipis/flag-icons) (MIT, `flags/`)
 
 ## Run locally
 Paste your key into your local copy of `config.js` (don't commit it), then start any static server:

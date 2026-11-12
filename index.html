@@ -52,6 +52,14 @@
         </div>
         <h3 class="small muted">Players</h3>
         <ul id="lobby-players" class="player-list"></ul>
+        <label class="field mode-field"><span>Game mode</span>
+          <select id="set-mode">
+            <option value="classic" selected>Classic (distance)</option>
+            <option value="country">Country</option>
+            <option value="streak">Country streak</option>
+          </select>
+          <small id="mode-help" class="muted"></small>
+        </label>
         <div id="lobby-settings" class="settings">
           <label class="field"><span>Rounds</span>
             <select id="set-rounds"><option>1</option><option>3</option><option selected>5</option><option>10</option></select>
@@ -113,10 +121,12 @@
       <div id="reveal-map" class="map"></div>
       <aside class="reveal-side">
         <div class="muted small" id="reveal-round"></div>
-        <h2 id="reveal-title"></h2>
+        <h2 id="reveal-country" class="reveal-country"></h2>
+        <div id="reveal-title" class="muted"></div>
         <a id="reveal-link" target="_blank" rel="noopener">Open this spot in Google Maps ↗</a>
+        <div id="reveal-you" class="reveal-you"></div>
         <table class="results">
-          <thead><tr><th>Player</th><th>Distance</th><th>Points</th><th>Total</th></tr></thead>
+          <thead><tr><th>Player</th><th id="reveal-col2">Distance</th><th>Points</th><th>Total</th></tr></thead>
           <tbody id="reveal-rows"></tbody>
         </table>
         <button id="btn-next" class="btn btn-primary btn-block">Next round</button>
@@ -149,6 +159,10 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="vendor/d3-array.min.js"></script>
+  <script src="vendor/d3-geo.min.js"></script>
+  <script src="vendor/topojson-client.min.js"></script>
+  <script src="countries.js"></script>
   <script src="config.js"></script>
   <script src="locations.js"></script>
   <script src="app.js"></script>

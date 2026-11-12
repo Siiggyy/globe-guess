@@ -15,11 +15,22 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 const me = { id: 'host', name: '', isHost: false, solo: false };
 let peer = null;
 let hostConn = null;
-const conns = new Map(); // host only: guest peer id -> DataConnection
+const conns = new Map();     // host only: player id -> DataConnection
+const peerToId = new Map();  // host only: PeerJS peer id -> player id (players keep their id across reconnects)
 
 /* ---------------- storage (optional) ---------------- */
 function loadName() { try { return localStorage.getItem('gg-name') || ''; } catch { return ''; } }
 function saveName(n) { try { localStorage.setItem('gg-name', n); } catch { /* ignore */ } }
+// Per-tab player id for a room, kept across reloads so a player can rejoin with their score.
+function playerToken(code, create) {
+  const key = 'gg-token-' + code;
+  try {
+    let t = sessionStorage.getItem(key);
+    if (!t && create) { t = 'p' + Math.random().toString(36).slice(2, 12); sessionStorage.setItem(key, t); }
+    return t || null;
+  } catch { return create ? 'p' + Math.random().toString(36).slice(2, 12) : null; }
+}
+function forgetToken(code) { try { sessionStorage.removeItem('gg-token-' + code); } catch { /* ignore */ } }
 
 /* ---------------- UI helpers ---------------- */
 const SCREENS = ['home', 'lobby', 'game', 'reveal', 'final'];
@@ -44,6 +55,25 @@ const pinIcon = (color, goal) => L.divIcon({
   className: '', html: `<span class="pin${goal ? ' pin-goal' : ''}" style="--c:${color}"></span>`,
   iconSize: [22, 22], iconAnchor: [11, 26]
 });
+const isCountryMode = (mode) => mode === 'country' || mode === 'streak';
+const roundLabel = (n, total) => (total ? `Round ${n} / ${total}` : `Round ${n}`);
+function scoreLabel(total, mode) {
+  return mode === 'streak' ? `🔥 ${total} in a row` : `${total.toLocaleString()} pts`;
+}
+function countryHtml(c) {
+  return c ? `${Countries.flag(c.code)} ${esc(c.name)}` : '🌊 Open sea';
+}
+// counts a number up inside an element
+function countUp(el, from, to, ms, fmt) {
+  const t0 = performance.now();
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / ms);
+    const e = 1 - Math.pow(1 - k, 3);
+    el.textContent = fmt(Math.round(from + (to - from) * e));
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 function fmtDist(km) {
   if (km == null) return '-';
   if (km < 1) return Math.round(km * 1000) + ' m';
@@ -67,6 +97,10 @@ function initMaps() {
     else guessMarker.setLatLng(e.latlng);
     $('#btn-guess').disabled = false;
     $('#btn-guess').textContent = 'Guess';
+    if (isCountryMode(view.round.mode) && Countries.ready()) {
+      const c = Countries.countryAt(view.myGuess.lat, view.myGuess.lng, true);
+      $('#btn-guess').innerHTML = 'Guess: ' + countryHtml(c);
+    }
   });
   revealMap = L.map('reveal-map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 1);
   tiles().addTo(revealMap);
@@ -152,9 +186,12 @@ async function fetchLocation() {
       const loc = data && data.location;
       if (!loc || !loc.pano || game.used.has(loc.pano)) continue;
       if (!data.links || data.links.length === 0) continue; // skip dead-end single photos
+      const plat = loc.latLng.lat(), plng = loc.latLng.lng();
+      const country = Countries.ready() ? Countries.countryAt(plat, plng, true) : null;
+      if (isCountryMode(game.settings.mode) && !country) continue;
       return {
-        pageid: loc.pano, pano: loc.pano,
-        lat: loc.latLng.lat(), lng: loc.latLng.lng(),
+        pageid: loc.pano, pano: loc.pano, country,
+        lat: plat, lng: plng,
         title: loc.description || 'Mystery location',
         heading: Math.floor(Math.random() * 360),
         url: 'https://www.google.com/maps/@?api=1&map_action=pano&pano=' + encodeURIComponent(loc.pano)
@@ -173,7 +210,7 @@ async function fetchLocation() {
  * ================================================================= */
 const game = {
   players: new Map(), // id -> {name, total, color}
-  settings: { rounds: 5, time: 90, move: 'move', region: 'world', compass: 'on' },
+  settings: { mode: 'classic', rounds: 5, time: 90, move: 'move', region: 'world', compass: 'on' },
   phase: 'lobby',     // lobby | loading | round | reveal | final
   roundNo: 0, current: null, roundStart: 0,
   guesses: new Map(), used: new Set(), timer: null, deadline: 0, next: null, lastReveal: null, lastFinal: null, history: [], code: null
@@ -184,6 +221,7 @@ function broadcast(msg) {
   onMessage(msg); // host's own view
 }
 function sendTo(id, msg) {
+  if (typeof msg === 'function') msg = msg(id);
   if (id === 'host') return onMessage(msg);
   const c = conns.get(id);
   if (c && c.open) c.send(msg);
@@ -194,7 +232,7 @@ function toHost(msg) {
 }
 function playersPayload() {
   return [...game.players.entries()].map(([id, p]) => ({
-    id, name: p.name, total: p.total, color: p.color, guessed: game.guesses.has(id)
+    id, name: p.name, total: p.total, color: p.color, guessed: game.guesses.has(id), online: p.online !== false
   }));
 }
 function broadcastPlayers() {
@@ -205,29 +243,37 @@ function addPlayer(id, name) {
   let color = 0;
   while (used.has(color) && color < COLORS.length - 1) color++;
   const clean = String(name || '').trim().slice(0, 20) || 'Player ' + (game.players.size + 1);
-  game.players.set(id, { name: clean, total: 0, color });
+  game.players.set(id, { name: clean, total: 0, color, online: true });
 }
-function removePlayer(id) {
-  conns.delete(id);
-  if (!game.players.delete(id)) return;
-  game.guesses.delete(id);
+// A guest's connection dropped. In the lobby they simply leave; during a game they stay
+// in the standings as "offline" with their score, so they can rejoin.
+function playerOffline(id) {
+  const p = game.players.get(id);
+  if (!p) return;
+  if (game.phase === 'lobby') { game.players.delete(id); game.guesses.delete(id); }
+  else p.online = false;
   broadcastPlayers();
   if (game.phase === 'round' && allGuessed()) hostReveal();
 }
-const allGuessed = () => game.players.size > 0 && [...game.players.keys()].every((id) => game.guesses.has(id));
+const onlineIds = () => [...game.players.entries()].filter(([, p]) => p.online !== false).map(([id]) => id);
+const allGuessed = () => onlineIds().length > 0 && onlineIds().every((id) => game.guesses.has(id));
 
 function hostOnMessage(from, msg) {
   if (!msg || typeof msg !== 'object') return;
   if (msg.t === 'join') {
-    if (game.players.has(from)) return;
-    if (game.players.size >= MAX_PLAYERS) { sendTo(from, { t: 'error', msg: 'That room is full.', fatal: true }); return; }
-    addPlayer(from, msg.name);
-    sendTo(from, { t: 'welcome', code: game.code });
+    const existing = game.players.get(from);
+    if (existing) {
+      existing.online = true; // rejoin: same id, score kept
+    } else {
+      if (game.players.size >= MAX_PLAYERS) { sendTo(from, { t: 'error', msg: 'That room is full.', fatal: true }); return; }
+      addPlayer(from, msg.name);
+    }
+    sendTo(from, { t: 'welcome', code: game.code, rejoined: !!existing });
     broadcastPlayers();
-    if (game.phase === 'round') sendTo(from, roundMsg());
+    if (game.phase === 'round') sendTo(from, roundMsg);
     else if (game.phase === 'reveal' && game.lastReveal) sendTo(from, game.lastReveal);
     else if (game.phase === 'final' && game.lastFinal) sendTo(from, game.lastFinal);
-    else if (game.phase === 'loading') sendTo(from, { t: 'loading', n: game.roundNo + 1, total: game.settings.rounds });
+    else if (game.phase === 'loading') sendTo(from, { t: 'loading', n: game.roundNo + 1, total: totalRounds() });
   } else if (msg.t === 'guess') {
     if (game.phase !== 'round' || game.guesses.has(from) || !game.players.has(from)) return;
     const lat = Number(msg.lat), lng = Number(msg.lng);
@@ -237,17 +283,20 @@ function hostOnMessage(from, msg) {
     if (allGuessed()) { hostReveal(); return; }
     // multiplayer: the first lock-in starts a short countdown for everyone else
     const left = game.deadline ? (game.deadline - Date.now()) / 1000 : Infinity;
-    if (game.players.size > 1 && game.guesses.size === 1 && left > LOCK_IN_SECONDS) {
+    if (onlineIds().length > 1 && game.guesses.size === 1 && left > LOCK_IN_SECONDS) {
       setRoundDeadline(LOCK_IN_SECONDS);
       broadcast({ t: 'timer', remaining: LOCK_IN_SECONDS, by: game.players.get(from).name });
     }
   }
 }
 
-const SETTING_IDS = ['rounds', 'time', 'move', 'region', 'compass'];
+const SETTING_IDS = ['mode', 'rounds', 'time', 'move', 'region', 'compass'];
 function readSettings() {
   const v = (id) => $('#set-' + id).value;
+  let mode = ['classic', 'country', 'streak'].includes(v('mode')) ? v('mode') : 'classic';
+  if (mode === 'streak' && !me.solo) mode = 'classic'; // streak is a solo mode
   game.settings = {
+    mode,
     rounds: Number(v('rounds')) || 5,
     time: Number(v('time')) || 0,
     move: ['move', 'nomove', 'nmpz'].includes(v('move')) ? v('move') : 'move',
@@ -255,9 +304,16 @@ function readSettings() {
     compass: v('compass') === 'off' ? 'off' : 'on'
   };
 }
-function hostStart() {
+async function hostStart() {
   readSettings();
+  if (isCountryMode(game.settings.mode) || !Countries.ready()) {
+    try { await Countries.load(); }
+    catch {
+      if (isCountryMode(game.settings.mode)) { toast('Could not load country borders. Check your connection and try again.'); return; }
+    }
+  }
   game.roundNo = 0;
+  game.lastReveal = null;
   game.used.clear();
   game.history = [];
   game.lastFinal = null;
@@ -266,9 +322,9 @@ function hostStart() {
 }
 async function hostNextRound() {
   if (game.phase === 'loading') return;
-  if (game.roundNo >= game.settings.rounds) return hostFinal();
+  if (game.phase === 'reveal' && game.lastReveal && game.lastReveal.last) return hostFinal();
   game.phase = 'loading';
-  broadcast({ t: 'loading', n: game.roundNo + 1, total: game.settings.rounds });
+  broadcast({ t: 'loading', n: game.roundNo + 1, total: totalRounds() });
   let loc = null;
   try { loc = await (game.next || fetchLocation()); } catch { loc = null; }
   game.next = null;
@@ -287,10 +343,11 @@ async function hostNextRound() {
   game.roundStart = Date.now();
   clearTimeout(game.timer);
   setRoundDeadline(game.settings.time > 0 ? game.settings.time : 0);
-  broadcast(roundMsg());
+  for (const id of game.players.keys()) sendTo(id, roundMsg);
   broadcastPlayers();
   game.next = fetchLocation().catch(() => null); // prefetch the next round
 }
+const totalRounds = () => (game.settings.mode === 'streak' ? null : game.settings.rounds);
 const LOCK_IN_SECONDS = 15;
 // seconds = 0 means no time limit
 function setRoundDeadline(seconds) {
@@ -298,28 +355,37 @@ function setRoundDeadline(seconds) {
   game.deadline = seconds > 0 ? Date.now() + seconds * 1000 : 0;
   if (seconds > 0) game.timer = setTimeout(hostReveal, seconds * 1000 + 1500); // grace for latency
 }
-function roundMsg() {
+// per player, so someone who rejoins mid-round gets their locked-in guess back
+function roundMsg(forId) {
   const timed = game.deadline > 0;
   const remaining = timed ? Math.max(0, (game.deadline - Date.now()) / 1000) : 0;
-  return { t: 'round', n: game.roundNo, total: game.settings.rounds, pano: game.current.pano, heading: game.current.heading, timed, remaining,
-    move: game.settings.move, compass: game.settings.compass };
+  return { t: 'round', n: game.roundNo, total: totalRounds(), pano: game.current.pano, heading: game.current.heading, timed, remaining,
+    move: game.settings.move, compass: game.settings.compass, mode: game.settings.mode, myGuess: game.guesses.get(forId) || null };
 }
 function hostReveal() {
   if (game.phase !== 'round') return;
   clearTimeout(game.timer);
   game.phase = 'reveal';
   const a = game.current;
+  const mode = game.settings.mode;
   const results = [...game.players.entries()].map(([id, p]) => {
     const g = game.guesses.get(id) || null;
-    let dist = null, score = 0;
-    if (g) { dist = haversine(a.lat, a.lng, g.lat, g.lng); score = scoreFor(dist); }
+    let dist = null, score = 0, country = null, correct = false;
+    if (g) {
+      dist = haversine(a.lat, a.lng, g.lat, g.lng);
+      country = Countries.ready() ? Countries.countryAt(g.lat, g.lng, true) : null;
+      correct = !!(country && a.country && country.code === a.country.code && country.name === a.country.name);
+      score = mode === 'classic' ? scoreFor(dist) : mode === 'country' ? (correct ? 5000 : 0) : (correct ? 1 : 0);
+    }
+    const before = p.total;
     p.total += score;
-    return { id, name: p.name, color: p.color, guess: g, dist, score, total: p.total };
-  }).sort((x, y) => y.score - x.score);
+    return { id, name: p.name, color: p.color, guess: g, dist, score, before, total: p.total, country, correct };
+  }).sort((x, y) => y.score - x.score || (x.dist ?? 1e9) - (y.dist ?? 1e9));
+  const last = mode === 'streak' ? !results.some((r) => r.correct) : game.roundNo >= game.settings.rounds;
   game.lastReveal = {
-    t: 'reveal', n: game.roundNo, total: game.settings.rounds,
-    answer: { lat: a.lat, lng: a.lng, title: a.title, url: a.url },
-    results, last: game.roundNo >= game.settings.rounds
+    t: 'reveal', n: game.roundNo, total: totalRounds(), mode,
+    answer: { lat: a.lat, lng: a.lng, title: a.title, url: a.url, country: a.country || null },
+    results, last
   };
   game.history.push(game.lastReveal);
   broadcast(game.lastReveal);
@@ -331,7 +397,7 @@ function hostFinal() {
     .map(([id, p]) => ({ id, name: p.name, color: p.color, total: p.total }))
     .sort((a, b) => b.total - a.total);
   const rounds = game.history.map((r) => ({ n: r.n, answer: r.answer, results: r.results }));
-  game.lastFinal = { t: 'final', standings, rounds };
+  game.lastFinal = { t: 'final', standings, rounds, mode: game.settings.mode };
   broadcast(game.lastFinal);
 }
 function hostBackToLobby() {
@@ -358,8 +424,10 @@ function onMessage(msg) {
   switch (msg.t) {
     case 'welcome':
       view.code = msg.code;
+      reconnect.tries = 0;
+      if (msg.rejoined) toast('Welcome back! You rejoined the game.');
       renderLobby();
-      show('lobby');
+      show('lobby'); // the current game state follows right after, if a game is running
       break;
     case 'players':
       view.players = msg.players;
@@ -404,13 +472,22 @@ function onMessage(msg) {
 
 function renderPlayers() {
   const items = view.players.map((p) =>
-    `<li class="${p.guessed ? 'done' : ''}"><span class="dot" style="--c:${COLORS[p.color]}"></span>${esc(p.name)}${p.id === me.id ? ' (you)' : ''}${p.guessed ? ' ✓' : ''}</li>`).join('');
+    `<li class="${p.guessed ? 'done' : ''}${p.online ? '' : ' offline'}"><span class="dot" style="--c:${COLORS[p.color]}"></span>${esc(p.name)}${p.id === me.id ? ' (you)' : ''}${p.online ? '' : ' (offline)'}${p.guessed ? ' ✓' : ''}</li>`).join('');
   $('#lobby-players').innerHTML = items;
   $('#game-players').innerHTML = view.players.length > 1 ? items : '';
-  $('#hud-score').textContent = myTotal().toLocaleString() + ' pts';
+  $('#hud-score').textContent = scoreLabel(myTotal(), view.settings && view.settings.mode);
   if (!me.isHost && view.settings) {
     for (const id of SETTING_IDS) if (view.settings[id] != null) $('#set-' + id).value = String(view.settings[id]);
   }
+}
+function updateModeFields() {
+  const streak = $('#set-mode').value === 'streak';
+  $('#set-rounds').disabled = !me.isHost || streak;
+  $('#mode-help').textContent = {
+    classic: 'Score up to 5,000 points per round. The closer, the better.',
+    country: 'Only the country counts: 5,000 points if your pin is in the right country, 0 if not.',
+    streak: 'Keep naming the right country. The game ends at your first wrong guess.'
+  }[$('#set-mode').value] || '';
 }
 function renderLobby() {
   $('#lobby-title').textContent = me.solo ? 'Solo game' : me.isHost ? 'Your room' : 'Joined room';
@@ -419,13 +496,19 @@ function renderLobby() {
   $('#btn-start').hidden = !me.isHost;
   $('#lobby-wait').hidden = me.isHost;
   for (const id of SETTING_IDS) $('#set-' + id).disabled = !me.isHost;
+  // streak is solo-only
+  const streakOpt = $('#set-mode option[value="streak"]');
+  streakOpt.disabled = !me.solo;
+  streakOpt.textContent = me.solo ? 'Country streak' : 'Country streak (solo only)';
+  if (!me.solo && $('#set-mode').value === 'streak') $('#set-mode').value = 'classic';
+  updateModeFields();
   renderPlayers();
 }
 
 let startPano = null;
 function startRoundView(pano, msg) {
   show('game');
-  $('#hud-round').textContent = `Round ${msg.n} / ${msg.total}`;
+  $('#hud-round').textContent = roundLabel(msg.n, msg.total);
   clearInterval(view.timerInt);
   $('#hud-timer').hidden = true;
   setMinimap(false);
@@ -442,8 +525,15 @@ function startRoundView(pano, msg) {
   if (guessMarker) { guessMarker.remove(); guessMarker = null; }
   guessMap.setView([20, 0], 1);
   $('#btn-guess').disabled = true;
-  $('#btn-guess').textContent = 'Place a pin on the map';
+  $('#btn-guess').textContent = isCountryMode(msg.mode) ? 'Pin the country on the map' : 'Place a pin on the map';
+  if (msg.myGuess) { // rejoined after already locking in
+    view.guessed = true;
+    view.myGuess = L.latLng(msg.myGuess.lat, msg.myGuess.lng);
+    guessMarker = L.marker(view.myGuess, { icon: pinIcon(myColor()) }).addTo(guessMap);
+    $('#btn-guess').textContent = 'Waiting for other players…';
+  }
   $('#pano-loading').hidden = false;
+  if (isCountryMode(msg.mode)) Countries.load().catch(() => {});
   startPano = { pano, heading: msg.heading || 0 };
   getPano().then((p) => {
     applyRestrictions(p, msg);
@@ -516,44 +606,84 @@ function submitGuess() {
   toHost({ t: 'guess', lat: view.myGuess.lat, lng: view.myGuess.lng });
 }
 
+let revealAnim = 0;
 function renderReveal(msg) {
   clearInterval(view.timerInt);
   view.round = null;
   show('reveal');
+  const anim = ++revealAnim;
+  const countryMode = isCountryMode(msg.mode);
   $('#hud-timer').hidden = true;
-  $('#hud-round').textContent = `Round ${msg.n} / ${msg.total}`;
-  $('#reveal-round').textContent = `Round ${msg.n} of ${msg.total}`;
+  $('#hud-round').textContent = roundLabel(msg.n, msg.total);
+  $('#reveal-round').textContent = msg.total ? `Round ${msg.n} of ${msg.total}` : `Round ${msg.n}`;
+  const c = msg.answer.country;
+  $('#reveal-country').innerHTML = c ? `${Countries.flag(c.code)} ${esc(c.name)}` : '';
   $('#reveal-title').textContent = msg.answer.title;
   $('#reveal-link').href = msg.answer.url;
 
+  // map: answer first, then each guess line "flies" in from the guess to the answer
   revealLayer.clearLayers();
   const goal = L.latLng(msg.answer.lat, msg.answer.lng);
   L.marker(goal, { icon: pinIcon('#111', true), zIndexOffset: 1000 }).addTo(revealLayer).bindTooltip(msg.answer.title);
   const pts = [goal];
+  const lines = [];
   for (const r of msg.results) {
     if (!r.guess) continue;
-    // draw the guess on the copy of the world nearest the answer so lines don't wrap the long way
-    let lng = r.guess.lng;
-    while (lng - goal.lng > 180) lng -= 360;
-    while (lng - goal.lng < -180) lng += 360;
-    const g = L.latLng(r.guess.lat, lng);
+    const g = L.latLng(r.guess.lat, nearLng(r.guess.lng, goal.lng));
     pts.push(g);
-    L.polyline([g, goal], { color: COLORS[r.color], weight: 3, dashArray: '6 6' }).addTo(revealLayer);
     L.marker(g, { icon: pinIcon(COLORS[r.color]) }).addTo(revealLayer).bindTooltip(r.name);
+    lines.push({ g, line: L.polyline([g, g], { color: COLORS[r.color], weight: 3, dashArray: '6 6' }).addTo(revealLayer) });
   }
   setTimeout(() => {
     revealMap.invalidateSize();
     if (pts.length > 1) revealMap.fitBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 12 });
     else revealMap.setView(goal, 5);
   }, 50);
+  const t0 = performance.now() + 300;
+  const LINE_MS = 900;
+  const drawLines = (t) => {
+    if (anim !== revealAnim) return;
+    const k = Math.max(0, Math.min(1, (t - t0) / LINE_MS));
+    const e = 1 - Math.pow(1 - k, 3);
+    for (const { g, line } of lines) {
+      line.setLatLngs([g, L.latLng(g.lat + (goal.lat - g.lat) * e, g.lng + (goal.lng - g.lng) * e)]);
+    }
+    if (k < 1) requestAnimationFrame(drawLines);
+  };
+  requestAnimationFrame(drawLines);
 
-  $('#reveal-rows').innerHTML = msg.results.map((r) => `<tr>
-      <td><span class="dot" style="--c:${COLORS[r.color]};display:inline-block"></span> ${esc(r.name)}${r.id === me.id ? ' (you)' : ''}</td>
-      <td>${r.guess ? fmtDist(r.dist) : 'no guess'}</td>
-      <td>${r.score.toLocaleString()}</td>
-      <td>${r.total.toLocaleString()}</td></tr>`).join('');
+  // your result banner
   const mine = msg.results.find((r) => r.id === me.id);
-  if (mine) $('#hud-score').textContent = mine.total.toLocaleString() + ' pts';
+  const you = $('#reveal-you');
+  if (mine) {
+    let sub;
+    if (!mine.guess) sub = 'No guess this round';
+    else if (countryMode) sub = (mine.correct ? '✅ Right country: ' : '❌ You picked ') + countryHtml(mine.country);
+    else sub = `${fmtDist(mine.dist)} away · ${countryHtml(mine.country)}`;
+    you.innerHTML = `<div class="you-points" id="you-points">0</div><div class="you-sub">${sub}</div>`;
+    you.className = 'reveal-you' + (countryMode ? (mine.correct ? ' good' : ' bad') : '');
+    const unit = msg.mode === 'streak' ? (n) => (mine.correct ? `🔥 Streak ${n}` : `Streak over at ${n}`) : (n) => `+${n.toLocaleString()} pts`;
+    const target = msg.mode === 'streak' ? mine.total : mine.score;
+    const start = msg.mode === 'streak' ? mine.before : 0;
+    setTimeout(() => { if (anim === revealAnim) countUp($('#you-points'), start, target, 900, unit); }, t0 - performance.now() + LINE_MS);
+    $('#you-points').textContent = unit(start);
+  } else you.innerHTML = '';
+
+  // table, numbers count up after the lines land
+  $('#reveal-col2').textContent = countryMode ? 'Pick' : 'Distance';
+  $('#reveal-rows').innerHTML = msg.results.map((r, i) => `<tr>
+      <td>${dotHtml(r.color)} ${esc(r.name)}${r.id === me.id ? ' (you)' : ''}</td>
+      <td>${!r.guess ? 'no guess' : countryMode ? `${r.correct ? '✅' : '❌'} ${r.country ? Countries.flag(r.country.code) : '🌊'}` : `${r.country ? Countries.flag(r.country.code) + ' ' : ''}${fmtDist(r.dist)}`}</td>
+      <td data-n="${i}" class="pts">0</td>
+      <td data-t="${i}">${r.before.toLocaleString()}</td></tr>`).join('');
+  setTimeout(() => {
+    if (anim !== revealAnim) return;
+    msg.results.forEach((r, i) => {
+      countUp(document.querySelector(`[data-n="${i}"]`), 0, r.score, 900, (n) => n.toLocaleString());
+      countUp(document.querySelector(`[data-t="${i}"]`), r.before, r.total, 900, (n) => n.toLocaleString());
+    });
+  }, t0 - performance.now() + LINE_MS);
+  if (mine) $('#hud-score').textContent = scoreLabel(mine.total, msg.mode);
 
   $('#btn-next').hidden = !me.isHost;
   $('#btn-next').textContent = msg.last ? 'See final results' : 'Next round';
@@ -567,14 +697,15 @@ function nearLng(lng, ref) {
   return lng;
 }
 const numIcon = (n) => L.divIcon({ className: '', html: `<span class="num-pin">${n}</span>`, iconSize: [26, 26], iconAnchor: [13, 13] });
-const dotHtml = (color) => `<span class="dot" style="--c:${COLORS[color]};display:inline-block"></span>`;
+function dotHtml(color) { return `<span class="dot" style="--c:${COLORS[color]};display:inline-block"></span>`; }
 
 function renderFinal(msg) {
   show('final');
   const rounds = msg.rounds || [];
   const players = msg.standings;
+  const countryMode = isCountryMode(msg.mode);
   $('#final-list').innerHTML = players.map((s) =>
-    `<li>${dotHtml(s.color)} ${esc(s.name)}${s.id === me.id ? ' (you)' : ''}: <strong>${s.total.toLocaleString()}</strong> pts</li>`).join('');
+    `<li>${dotHtml(s.color)} ${esc(s.name)}${s.id === me.id ? ' (you)' : ''}: <strong>${scoreLabel(s.total, msg.mode)}</strong></li>`).join('');
 
   // map: every round's location (numbered) plus every player's guess
   finalLayer.clearLayers();
@@ -589,7 +720,7 @@ function renderFinal(msg) {
       pts.push(g);
       L.polyline([g, goal], { color: COLORS[x.color], weight: 2, opacity: 0.85, dashArray: '4 6' }).addTo(finalLayer);
       L.circleMarker(g, { radius: 6, color: '#fff', weight: 2, fillColor: COLORS[x.color], fillOpacity: 1 })
-        .addTo(finalLayer).bindTooltip(`${esc(x.name)}, round ${r.n}: ${fmtDist(x.dist)}, ${x.score.toLocaleString()} pts`);
+        .addTo(finalLayer).bindTooltip(`${esc(x.name)}, round ${r.n}: ${x.country ? Countries.flag(x.country.code) + ' ' : ''}${fmtDist(x.dist)}, ${x.score.toLocaleString()} pts`);
     }
     L.marker(goal, { icon: numIcon(r.n), zIndexOffset: 1000 }).addTo(finalLayer)
       .bindTooltip(`Round ${r.n}: ${esc(r.answer.title)}`)
@@ -605,16 +736,19 @@ function renderFinal(msg) {
   let h = `<thead><tr><th>Round</th>${players.map((p) => `<th>${dotHtml(p.color)} ${esc(p.name)}</th>`).join('')}</tr></thead><tbody>`;
   rounds.forEach((r, i) => {
     const best = Math.max(0, ...r.results.map((x) => x.score));
-    h += `<tr class="round-row" data-i="${i}"><td><strong>${r.n}</strong><span class="muted small place" title="${esc(r.answer.title)}">${esc(r.answer.title)}</span></td>`;
+    const ac = r.answer.country;
+    h += `<tr class="round-row" data-i="${i}"><td><strong>${r.n}</strong> ${ac ? Countries.flag(ac.code) + ' ' + esc(ac.name) : ''}<span class="muted small place" title="${esc(r.answer.title)}">${esc(r.answer.title)}</span></td>`;
     h += players.map((p) => {
       const x = r.results.find((y) => y.id === p.id);
       if (!x) return '<td class="muted">-</td>';
       const cls = multi && best > 0 && x.score === best ? ' class="best"' : '';
-      return `<td${cls}>${x.score.toLocaleString()}<div class="muted small">${x.guess ? fmtDist(x.dist) : 'no guess'}</div></td>`;
+      const flagOf = x.country ? Countries.flag(x.country.code) : (x.guess ? '🌊' : '');
+      const detail = !x.guess ? 'no guess' : countryMode ? `${x.correct ? '✅' : '❌'} ${flagOf}` : `${flagOf} ${fmtDist(x.dist)}`;
+      return `<td${cls}>${x.score.toLocaleString()}<div class="muted small">${detail}</div></td>`;
     }).join('');
     h += '</tr>';
   });
-  h += `</tbody><tfoot><tr><th>Total</th>${players.map((p) => `<th>${p.total.toLocaleString()}</th>`).join('')}</tr></tfoot>`;
+  h += `</tbody><tfoot><tr><th>Total</th>${players.map((p) => `<th>${msg.mode === 'streak' ? '🔥 ' + p.total : p.total.toLocaleString()}</th>`).join('')}</tr></tfoot>`;
   $('#final-breakdown').innerHTML = h;
 
   $('#btn-again').hidden = !me.isHost;
@@ -636,12 +770,17 @@ function randomCode() {
   for (let i = 0; i < 5; i++) s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
   return s;
 }
+const reconnect = { code: null, tries: 0, timer: null };
 function resetAll() {
+  clearTimeout(reconnect.timer);
+  reconnect.code = null;
+  reconnect.tries = 0;
   clearTimeout(game.timer);
   clearInterval(view.timerInt);
   for (const c of conns.values()) { try { c.close(); } catch { /* ignore */ } }
   conns.clear();
-  if (hostConn) { try { hostConn.close(); } catch { /* ignore */ } hostConn = null; }
+  if (hostConn) { const c = hostConn; hostConn = null; try { c.close(); } catch { /* ignore */ } }
+  peerToId.clear();
   if (peer) { try { peer.destroy(); } catch { /* ignore */ } peer = null; }
   game.players.clear(); game.guesses.clear(); game.used.clear();
   game.phase = 'lobby'; game.roundNo = 0; game.next = null; game.code = null; game.lastReveal = null; game.lastFinal = null; game.history = [];
@@ -684,10 +823,27 @@ function startHosting(attempt = 0) {
     toast('Room ready. Share the code with friends!');
   });
   peer.on('connection', (conn) => {
-    conn.on('open', () => conns.set(conn.peer, conn));
-    conn.on('data', (d) => hostOnMessage(conn.peer, d));
-    conn.on('close', () => removePlayer(conn.peer));
-    conn.on('error', () => removePlayer(conn.peer));
+    conn.on('data', (d) => {
+      if (d && d.t === 'join') {
+        // the player id is the guest's per-tab token, so a reconnecting guest maps back to their old entry
+        const id = (typeof d.token === 'string' && /^[a-z0-9]{4,24}$/i.test(d.token) && d.token !== 'host') ? d.token : conn.peer;
+        const old = conns.get(id);
+        if (old && old !== conn) { try { old.close(); } catch { /* ignore */ } }
+        peerToId.set(conn.peer, id);
+        conns.set(id, conn);
+        hostOnMessage(id, d);
+        return;
+      }
+      const id = peerToId.get(conn.peer);
+      if (id) hostOnMessage(id, d);
+    });
+    const dropped = () => {
+      const id = peerToId.get(conn.peer);
+      peerToId.delete(conn.peer);
+      if (id && conns.get(id) === conn) { conns.delete(id); playerOffline(id); }
+    };
+    conn.on('close', dropped);
+    conn.on('error', dropped);
   });
   peer.on('disconnected', () => { if (peer && !peer.destroyed) peer.reconnect(); });
   peer.on('error', (err) => {
@@ -705,18 +861,43 @@ function joinRoom() {
   resetAll();
   readName();
   toast('Connecting…');
+  connectToRoom(code);
+}
+// (Re)connect to a room. The token makes the host treat us as the same player as before.
+function connectToRoom(code) {
+  reconnect.code = code;
+  me.id = playerToken(code, true);
+  if (peer) { try { peer.destroy(); } catch { /* ignore */ } }
   peer = new Peer();
-  peer.on('open', (id) => {
-    me.id = id;
-    hostConn = peer.connect(PEER_PREFIX + code, { reliable: true });
-    hostConn.on('open', () => hostConn.send({ t: 'join', name: me.name }));
-    hostConn.on('data', (msg) => { if (msg && msg.t === 'welcome') history.replaceState(null, '', '?room=' + code); onMessage(msg); });
-    hostConn.on('close', () => { if (hostConn) { toast('The host left the game.'); goHome(); } });
+  peer.on('open', () => {
+    const conn = peer.connect(PEER_PREFIX + code, { reliable: true });
+    hostConn = conn;
+    conn.on('open', () => conn.send({ t: 'join', name: me.name, token: me.id }));
+    conn.on('data', (msg) => { if (msg && msg.t === 'welcome') history.replaceState(null, '', '?room=' + code); onMessage(msg); });
+    conn.on('close', () => { if (hostConn === conn) connectionLost(); });
   });
   peer.on('error', (err) => {
+    if (reconnect.tries > 0) { connectionLost(); return; } // still trying to get back in
     toast(err.type === 'peer-unavailable' ? 'Room not found. Check the code.' : 'Connection problem: ' + (err.type || err.message));
+    forgetToken(code);
     goHome();
   });
+}
+function connectionLost() {
+  const code = reconnect.code;
+  if (!code) return;
+  hostConn = null;
+  if (reconnect.tries >= 6) {
+    toast('Could not reconnect. The host may have left the game.');
+    forgetToken(code);
+    history.replaceState(null, '', location.pathname);
+    goHome();
+    return;
+  }
+  reconnect.tries++;
+  toast(`Connection lost. Reconnecting… (${reconnect.tries}/6)`);
+  clearTimeout(reconnect.timer);
+  reconnect.timer = setTimeout(() => connectToRoom(code), 1500 * reconnect.tries);
 }
 
 /* ---------------- wire up ---------------- */
@@ -725,13 +906,15 @@ function init() {
   $('#in-name').value = loadName();
   const room = new URLSearchParams(location.search).get('room');
   if (room) $('#in-code').value = room.toUpperCase().slice(0, 5);
+  Countries.load().catch(() => {}); // country borders for flags and country modes
 
   $('#btn-solo').onclick = startSolo;
   $('#btn-host').onclick = () => startHosting(0);
   $('#btn-join').onclick = joinRoom;
   $('#in-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinRoom(); });
   $('#btn-start').onclick = () => { if (me.isHost) hostStart(); };
-  $('#btn-leave').onclick = () => { history.replaceState(null, '', location.pathname); goHome(); };
+  const leave = () => { if (reconnect.code) forgetToken(reconnect.code); history.replaceState(null, '', location.pathname); goHome(); };
+  $('#btn-leave').onclick = leave;
   $('#btn-guess').onclick = submitGuess;
   $('#final-breakdown').addEventListener('click', (e) => {
     const tr = e.target.closest('.round-row');
@@ -750,7 +933,7 @@ function init() {
   };
   $('#btn-next').onclick = () => { if (me.isHost) hostNextRound(); };
   $('#btn-again').onclick = () => { if (me.isHost) hostBackToLobby(); };
-  $('#btn-home').onclick = () => { history.replaceState(null, '', location.pathname); goHome(); };
+  $('#btn-home').onclick = leave;
   $('#btn-copy').onclick = async () => {
     const link = location.origin + location.pathname + '?room=' + view.code;
     try { await navigator.clipboard.writeText(link); toast('Invite link copied!'); }
@@ -762,11 +945,20 @@ function init() {
     broadcastPlayers();
   };
   for (const id of SETTING_IDS) $('#set-' + id).onchange = syncSettings;
+  $('#set-mode').addEventListener('change', updateModeFields);
   window.addEventListener('keydown', (e) => {
     if (e.key === ' ' && !$('#screen-game').hidden && !$('#btn-guess').disabled) { e.preventDefault(); submitGuess(); }
   });
   show('home');
   loadGoogle().catch((e) => toast(e.message)); // load the script early; no panorama is created yet
+  // came back to a room this tab was playing in (e.g. after a reload): rejoin automatically
+  const code = room && room.toUpperCase().slice(0, 5);
+  if (code && playerToken(code, false) && typeof window.Peer === 'function') {
+    readName();
+    toast('Rejoining your game…');
+    reconnect.tries = 1; // treat failures as reconnect attempts
+    connectToRoom(code);
+  }
 }
 
 if (typeof L === 'undefined') {

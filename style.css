@@ -176,3 +176,20 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
   .big-timer { top: 10px; font-size: 24px; min-width: 104px; padding: 6px 14px 8px; }
   .player-pills { top: 76px; }
 }
+
+/* lobby mode */
+.mode-field small { font-size: .8rem; }
+/* offline players */
+.player-list li.offline, .player-pills li.offline { opacity: .5; }
+/* reveal */
+.reveal-country { font-size: 1.6rem; margin: 2px 0 0; }
+.reveal-you { margin: 10px 0 4px; padding: 14px 16px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.reveal-you:empty { display: none; }
+.reveal-you.bad { background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+.you-points { font-size: 2rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.you-sub { color: var(--muted); margin-top: 4px; }
+.results td.pts { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.flag-img { display: inline-block; width: 1.33em; height: 1em; vertical-align: -0.12em; border-radius: 2px; box-shadow: 0 0 0 1px rgba(0,0,0,.12); object-fit: cover; }
+.flag-none { background: var(--line); }
+.reveal-country .flag-img { width: 1.6em; height: 1.2em; vertical-align: -0.15em; }
