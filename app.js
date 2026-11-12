@@ -117,7 +117,11 @@ async function getStreetView() {
 async function getPano() {
   const lib = await getStreetView();
   if (!svPano) {
+    const { ControlPosition } = await google.maps.importLibrary('core');
     svPano = new lib.StreetViewPanorama($('#pano'), {
+      // keep compass and zoom at the top right, clear of the guess map in the bottom right
+      panControlOptions: { position: ControlPosition.RIGHT_TOP },
+      zoomControlOptions: { position: ControlPosition.RIGHT_TOP },
       addressControl: false, showRoadLabels: false, fullscreenControl: false,
       motionTracking: false, motionTrackingControl: false, enableCloseButton: false,
       linksControl: true, panControl: true, zoomControl: true, clickToGo: true, scrollwheel: true
