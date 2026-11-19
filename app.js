@@ -283,15 +283,78 @@ function scoreFor(km) {
   return Math.round(5000 * Math.exp(-km / 2000));
 }
 
+/* ---------------- imagery sources: Google Street View, Mapillary (free) ---------------- */
+const realValue = (v) => (v && !/^PASTE_YOUR_/.test(v) ? v : '');
+const googleKey = () => realValue(window.GG_CONFIG && window.GG_CONFIG.googleMapsKey);
+const mapillaryToken = () => realValue(window.GG_CONFIG && window.GG_CONFIG.mapillaryToken);
+
+// Google's daily quota resets at midnight US Pacific time; remember a "down" state until then.
+function nextPacificMidnight() {
+  const now = new Date();
+  const pt = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  const next = new Date(pt);
+  next.setHours(24, 0, 0, 0);
+  return Date.now() + (next - pt);
+}
+function loadGoogleDown() {
+  try {
+    const d = JSON.parse(localStorage.getItem('gg-google-down') || 'null');
+    if (d && d.until > Date.now()) return d.reason;
+  } catch { /* ignore */ }
+  return null;
+}
+const sources = {
+  google: { ok: true, reason: null },
+  mapillary: { ok: true, reason: null }
+};
+function initSources() {
+  if (!googleKey()) sources.google = { ok: false, reason: 'nokey' };
+  else { const r = loadGoogleDown(); if (r) sources.google = { ok: false, reason: r }; }
+  if (!mapillaryToken()) sources.mapillary = { ok: false, reason: 'nokey' };
+}
+// reason: 'quota' (daily limit reached) or 'auth' (key refused)
+function markGoogleDown(reason) {
+  if (!sources.google.ok) return;
+  sources.google = { ok: false, reason };
+  try { localStorage.setItem('gg-google-down', JSON.stringify({ reason, until: nextPacificMidnight() })); } catch { /* ignore */ }
+  if (me.isHost && game.settings.source === 'google' && sources.mapillary.ok) {
+    $('#set-source').value = 'auto';
+    readSettings();
+    broadcastPlayers();
+    toast('Google Street View is unavailable for today. Switched to automatic (Mapillary).');
+  }
+  refreshSourceSelect();
+}
+const SOURCE_LABELS = {
+  auto: 'Automatic (Google, then Mapillary)', google: 'Google Street View', mapillary: 'Mapillary (free)'
+};
+const DOWN_LABELS = { quota: 'daily limit reached', auth: 'key rejected', nokey: 'not configured' };
+function refreshSourceSelect() {
+  const sel = $('#set-source');
+  if (!sel) return;
+  for (const name of ['google', 'mapillary']) {
+    const opt = sel.querySelector(`option[value="${name}"]`);
+    const st = sources[name];
+    opt.disabled = !st.ok;
+    opt.textContent = SOURCE_LABELS[name] + (st.ok ? '' : ` (${DOWN_LABELS[st.reason] || 'unavailable'})`);
+  }
+  // guests mirror the host's choice, even if it is disabled locally
+  if (me.isHost && sel.selectedOptions[0] && sel.selectedOptions[0].disabled) sel.value = 'auto';
+}
+const isQuotaError = (e) => /OVER_QUERY_LIMIT|REQUEST_DENIED/.test((e && (e.code || e.message)) || '');
+
 /* ---------------- Google Street View ---------------- */
 let googleReady = null;
 function loadGoogle() {
   if (googleReady) return googleReady;
   googleReady = new Promise((resolve, reject) => {
-    const key = (window.GG_CONFIG && window.GG_CONFIG.googleMapsKey) || '';
+    const key = googleKey();
     if (!key) { reject(new Error('No Google Maps key in config.js')); return; }
     window.__ggGoogleInit = resolve;
-    window.gm_authFailure = () => toast('Google Maps rejected the API key (check key restrictions or the daily quota).');
+    window.gm_authFailure = () => {
+      markGoogleDown('auth');
+      toast('Google Maps rejected the API key (check key restrictions or the daily quota).');
+    };
     const s = document.createElement('script');
     s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(key) + '&v=weekly&loading=async&callback=__ggGoogleInit';
     s.async = true;
@@ -322,72 +385,203 @@ async function getPano() {
       linksControl: true, panControl: true, zoomControl: true, clickToGo: true, scrollwheel: true
     });
     svPano.addListener('pano_changed', () => {
+      if (curSource !== 'google') return;
       if (view.round && view.round.move && view.round.move !== 'move' && startPano && svPano.getPano() !== startPano.pano) {
         svPano.setPano(startPano.pano);
       }
     });
-    svPano.addListener('pov_changed', updateCompass);
+    svPano.addListener('pov_changed', () => { if (curSource === 'google') updateCompass(); });
     svPano.addListener('status_changed', () => {
-      if (svPano.getStatus() === 'OK') $('#pano-loading').hidden = true;
+      if (curSource === 'google' && svPano.getStatus() === 'OK') $('#pano-loading').hidden = true;
     });
   }
   return svPano;
 }
-async function fetchLocation() {
-  const lib = await getStreetView();
-  // Avoid countries already used this game: candidates are checked offline before asking Google,
-  // and the rule is relaxed if a region runs out of new countries.
-  // once every country of the region has had its turn, start a new cycle instead of wasting lookups
-  if (Countries.ready()) {
-    const region = game.settings.region;
-    if (!game.regionCountries || game.regionCountries.region !== region) {
-      const pool = window.LOCATION_REGIONS[region] || window.LOCATION_REGIONS.world;
-      const set = new Set(pool.map((p) => { const c = Countries.countryAt(p[0], p[1], true); return c && c.code; }).filter(Boolean));
-      game.regionCountries = { region, set };
-    }
-    if ([...game.regionCountries.set].every((c) => game.usedCountries.has(c))) game.usedCountries.clear();
+
+/* ---------------- Mapillary (free, crowd-sourced) ---------------- */
+const MLY_VERSION = '4.1.2';
+let mlyReady = null;
+function loadMapillary() {
+  if (mlyReady) return mlyReady;
+  mlyReady = new Promise((resolve, reject) => {
+    if (!mapillaryToken()) { reject(new Error('No Mapillary token in config.js')); return; }
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = `https://cdn.jsdelivr.net/npm/mapillary-js@${MLY_VERSION}/dist/mapillary.css`;
+    document.head.appendChild(css);
+    const s = document.createElement('script');
+    s.src = `https://cdn.jsdelivr.net/npm/mapillary-js@${MLY_VERSION}/dist/mapillary.js`;
+    s.async = true;
+    s.onload = () => resolve(window.mapillary);
+    s.onerror = () => { mlyReady = null; reject(new Error('Could not load Mapillary')); };
+    document.head.appendChild(s);
+  });
+  return mlyReady;
+}
+let mlyViewer = null, mlyImage = null, mlyBearing = 0;
+async function getMlyViewer() {
+  const lib = await loadMapillary();
+  if (!mlyViewer) {
+    mlyViewer = new lib.Viewer({ accessToken: mapillaryToken(), container: 'pano-mly', component: { cover: false } });
+    mlyViewer.on('bearing', (e) => { mlyBearing = e.bearing; if (curSource === 'mapillary') updateCompass(); });
+    mlyViewer.on('image', (e) => {
+      if (curSource !== 'mapillary' || !e.image) return;
+      mlyImage = e.image;
+      $('#pano-loading').hidden = true;
+      // "no moving": always go back to the start image
+      if (view.round && view.round.move && view.round.move !== 'move' && startPano && e.image.id !== startPano.pano) {
+        mlyViewer.moveTo(startPano.pano).catch(() => {});
+      }
+    });
+    window.addEventListener('resize', () => mlyViewer.resize());
   }
+  return mlyViewer;
+}
+// Point a 360° Mapillary image at a compass heading (flat photos can't turn, so they are left as is).
+function mlySetHeading(heading) {
+  if (!mlyViewer || !mlyImage || mlyImage.cameraType !== 'spherical') return;
+  const base = isFinite(mlyImage.computedCompassAngle) ? mlyImage.computedCompassAngle : (mlyImage.compassAngle || 0);
+  const x = ((((heading - base) / 360 + 0.5) % 1) + 1) % 1;
+  mlyViewer.setCenter([x, 0.5]);
+}
+
+/* ---------------- picking a location (host) ---------------- */
+// Avoid countries already used this game: candidates are checked offline before any lookup,
+// and the rule is relaxed if a region runs out of new countries.
+function prepareCountryCycle() {
+  // once every country of the region has had its turn, start a new cycle instead of wasting lookups
+  if (!Countries.ready()) return;
+  const region = game.settings.region;
+  if (!game.regionCountries || game.regionCountries.region !== region) {
+    const pool = window.LOCATION_REGIONS[region] || window.LOCATION_REGIONS.world;
+    const set = new Set(pool.map((p) => { const c = Countries.countryAt(p[0], p[1], true); return c && c.code; }).filter(Boolean));
+    game.regionCountries = { region, set };
+  }
+  if ([...game.regionCountries.set].every((c) => game.usedCountries.has(c))) game.usedCountries.clear();
+}
+// A random jittered point near a seed, or null if it is clearly in a country already used.
+function pickCandidate(avoid) {
+  const pool = window.LOCATION_REGIONS[game.settings.region] || window.LOCATION_REGIONS.world;
+  const seed = pool[Math.floor(Math.random() * pool.length)];
+  const rural = seed[2] === 1; // countryside seeds are spread over a wider area
+  const spread = rural ? 1.8 : 0.6;
+  const lat = Math.max(-85, Math.min(85, seed[0] + (Math.random() - 0.5) * spread));
+  const lng = seed[1] + (Math.random() - 0.5) * spread / Math.max(0.3, Math.cos(seed[0] * Math.PI / 180));
+  if (avoid) {
+    const pre = Countries.countryAt(lat, lng, true);
+    if (!pre || game.usedCountries.has(pre.code)) return null;
+  }
+  return { lat, lng, rural };
+}
+// Shared checks once a source has found an image at (plat, plng). Returns the country, or false to skip.
+function acceptSpot(id, plat, plng, avoid) {
+  if (game.used.has(id)) return false;
+  const country = Countries.ready() ? Countries.countryAt(plat, plng, true) : null;
+  if (isCountryMode(game.settings.mode) && !country) return false;
+  if (avoid && country && game.usedCountries.has(country.code)) return false;
+  return country || null;
+}
+
+async function fetchGoogleLocation() {
+  const lib = await getStreetView();
+  prepareCountryCycle();
   let apiCalls = 0;
   for (let i = 0; i < 300 && apiCalls < 15; i++) {
     const avoid = Countries.ready() && apiCalls < 10 && i < 150;
-    const pool = window.LOCATION_REGIONS[game.settings.region] || window.LOCATION_REGIONS.world;
-    const seed = pool[Math.floor(Math.random() * pool.length)];
-    const rural = seed[2] === 1; // countryside seeds are spread over a wider area
-    const spread = rural ? 1.8 : 0.6;
-    const lat = Math.max(-85, Math.min(85, seed[0] + (Math.random() - 0.5) * spread));
-    const lng = seed[1] + (Math.random() - 0.5) * spread / Math.max(0.3, Math.cos(seed[0] * Math.PI / 180));
-    if (avoid) {
-      // only spend a Google lookup on points that are clearly in a country not used yet
-      const pre = Countries.countryAt(lat, lng, true);
-      if (!pre || game.usedCountries.has(pre.code)) continue;
-    }
+    const cand = pickCandidate(avoid);
+    if (!cand) continue;
     apiCalls++;
-    const req = { location: { lat, lng }, radius: rural ? 30000 : 15000, preference: lib.StreetViewPreference.NEAREST };
+    const req = { location: { lat: cand.lat, lng: cand.lng }, radius: cand.rural ? 30000 : 15000, preference: lib.StreetViewPreference.NEAREST };
     if (lib.StreetViewSource && lib.StreetViewSource.GOOGLE) req.sources = [lib.StreetViewSource.GOOGLE];
     else req.source = lib.StreetViewSource.OUTDOOR;
     try {
       const { data } = await svService.getPanorama(req);
       const loc = data && data.location;
-      if (!loc || !loc.pano || game.used.has(loc.pano)) continue;
+      if (!loc || !loc.pano) continue;
       if (!data.links || data.links.length === 0) continue; // skip dead-end single photos
       const plat = loc.latLng.lat(), plng = loc.latLng.lng();
-      const country = Countries.ready() ? Countries.countryAt(plat, plng, true) : null;
-      if (isCountryMode(game.settings.mode) && !country) continue;
-      if (avoid && country && game.usedCountries.has(country.code)) continue;
+      const country = acceptSpot(loc.pano, plat, plng, avoid);
+      if (country === false) continue;
       return {
-        pageid: loc.pano, pano: loc.pano, country,
+        source: 'google', pageid: loc.pano, pano: loc.pano, country,
         lat: plat, lng: plng,
         title: loc.description || 'Mystery location',
         heading: Math.floor(Math.random() * 360),
         url: 'https://www.google.com/maps/@?api=1&map_action=pano&pano=' + encodeURIComponent(loc.pano)
       };
     } catch (e) {
-      const code = (e && (e.code || e.message)) || '';
-      if (/OVER_QUERY_LIMIT|REQUEST_DENIED/.test(code)) throw e; // quota hit or key refused: stop
+      if (isQuotaError(e)) { // quota hit or key refused: stop
+        markGoogleDown(/OVER_QUERY_LIMIT/.test((e && (e.code || e.message)) || '') ? 'quota' : 'auth');
+        throw e;
+      }
       /* ZERO_RESULTS: try another spot */
     }
   }
   throw new Error('no location found');
+}
+
+// Mapillary's image search takes a small bounding box (well under 0.01 square degrees).
+const MLY_BOX = 0.045; // half size in degrees
+async function mapillarySearch(lat, lng, pano) {
+  const lngHalf = MLY_BOX / Math.max(0.3, Math.cos(lat * Math.PI / 180)) * 0.5;
+  const bbox = [lng - lngHalf, lat - MLY_BOX, lng + lngHalf, lat + MLY_BOX].map((v) => v.toFixed(5)).join(',');
+  const params = new URLSearchParams({
+    access_token: mapillaryToken(), fields: 'id,computed_geometry,geometry,is_pano', bbox, limit: '100'
+  });
+  if (pano) params.set('is_pano', 'true');
+  const res = await fetch('https://graph.mapillary.com/images?' + params);
+  if (!res.ok) {
+    const err = new Error('Mapillary request failed (' + res.status + ')');
+    err.status = res.status;
+    throw err;
+  }
+  const json = await res.json();
+  return (json && json.data) || [];
+}
+async function fetchMapillaryLocation() {
+  if (!mapillaryToken()) throw new Error('No Mapillary token in config.js');
+  prepareCountryCycle();
+  let apiCalls = 0;
+  for (let i = 0; i < 400 && apiCalls < 30; i++) {
+    const avoid = Countries.ready() && apiCalls < 20 && i < 200;
+    const cand = pickCandidate(avoid);
+    if (!cand) continue;
+    apiCalls++;
+    let list;
+    try { list = await mapillarySearch(cand.lat, cand.lng, apiCalls <= 18); } // prefer 360° images, then accept any
+    catch (e) {
+      if (e.status === 401 || e.status === 403) throw e; // bad token: stop
+      continue;
+    }
+    // try a few random images from this box
+    for (let k = 0; k < 4 && list.length; k++) {
+      const img = list.splice(Math.floor(Math.random() * list.length), 1)[0];
+      const geo = img.computed_geometry || img.geometry;
+      if (!img.id || !geo || !geo.coordinates) continue;
+      const [plng, plat] = geo.coordinates;
+      const country = acceptSpot('mly:' + img.id, plat, plng, avoid);
+      if (country === false) continue;
+      return {
+        source: 'mapillary', pageid: 'mly:' + img.id, pano: String(img.id), country,
+        lat: plat, lng: plng, title: 'Mystery location',
+        heading: Math.floor(Math.random() * 360),
+        url: 'https://www.mapillary.com/app/?pKey=' + encodeURIComponent(img.id) + '&focus=photo'
+      };
+    }
+  }
+  throw new Error('no location found');
+}
+// The source setting decides where images come from. "auto" uses Google while it works and
+// falls back to Mapillary (for the same round) once Google is out of quota or fails.
+async function fetchLocation() {
+  const choice = game.settings.source || 'auto';
+  if (choice === 'mapillary') return fetchMapillaryLocation();
+  if (choice === 'google') return fetchGoogleLocation();
+  if (sources.google.ok) {
+    try { return await fetchGoogleLocation(); }
+    catch (e) { if (!sources.mapillary.ok) throw e; }
+  }
+  return fetchMapillaryLocation();
 }
 
 /* =================================================================
@@ -395,7 +589,7 @@ async function fetchLocation() {
  * ================================================================= */
 const game = {
   players: new Map(), // id -> {name, total, color}
-  settings: { mode: 'classic', rounds: 5, time: 90, move: 'move', region: 'world', compass: 'on' },
+  settings: { mode: 'classic', rounds: 5, time: 90, move: 'move', region: 'world', compass: 'on', source: 'auto' },
   phase: 'lobby',     // lobby | loading | round | reveal | final
   roundNo: 0, current: null, roundStart: 0,
   guesses: new Map(), used: new Set(), usedCountries: new Set(), timer: null, deadline: 0, next: null, lastReveal: null, lastFinal: null, history: [], code: null
@@ -478,7 +672,7 @@ function hostOnMessage(from, msg) {
   }
 }
 
-const SETTING_IDS = ['mode', 'rounds', 'time', 'move', 'region', 'compass'];
+const SETTING_IDS = ['mode', 'rounds', 'time', 'move', 'region', 'compass', 'source'];
 function readSettings() {
   const v = (id) => $('#set-' + id).value;
   let mode = ['classic', 'country', 'streak'].includes(v('mode')) ? v('mode') : 'classic';
@@ -489,7 +683,8 @@ function readSettings() {
     time: Number(v('time')) || 0,
     move: ['move', 'nomove', 'nmpz'].includes(v('move')) ? v('move') : 'move',
     region: window.LOCATION_REGIONS[v('region')] ? v('region') : 'world',
-    compass: v('compass') === 'off' ? 'off' : 'on'
+    compass: v('compass') === 'off' ? 'off' : 'on',
+    source: ['auto', 'google', 'mapillary'].includes(v('source')) ? v('source') : 'auto'
   };
 }
 async function hostStart() {
@@ -522,7 +717,11 @@ async function hostNextRound() {
   if (!loc || game.used.has(loc.pageid)) { try { loc = await fetchLocation(); } catch { loc = null; } }
   if (!loc) {
     game.phase = 'lobby';
-    broadcast({ t: 'error', msg: 'Could not load a Street View location. The daily Google Maps limit may be reached, or check your connection.' });
+    const src = game.settings.source;
+    const why = src === 'mapillary' ? 'No Mapillary image was found. Check the Mapillary token or your connection, or try another region.'
+      : src === 'google' ? 'The daily Google Maps limit may be reached. Try the automatic or Mapillary source, or check your connection.'
+      : 'Neither Google Street View nor Mapillary returned a location. Check your connection and try again.';
+    broadcast({ t: 'error', msg: 'Could not load a street-level location. ' + why });
     broadcastPlayers();
     return;
   }
@@ -551,7 +750,7 @@ function setRoundDeadline(seconds) {
 function roundMsg(forId) {
   const timed = game.deadline > 0;
   const remaining = timed ? Math.max(0, (game.deadline - Date.now()) / 1000) : 0;
-  return { t: 'round', n: game.roundNo, total: totalRounds(), pano: game.current.pano, heading: game.current.heading, timed, remaining,
+  return { t: 'round', n: game.roundNo, total: totalRounds(), source: game.current.source || 'google', pano: game.current.pano, heading: game.current.heading, timed, remaining,
     move: game.settings.move, compass: game.settings.compass, mode: game.settings.mode, myGuess: game.guesses.get(forId) || null };
 }
 function hostReveal() {
@@ -694,6 +893,7 @@ function renderLobby() {
   $('#btn-start').hidden = !me.isHost;
   $('#lobby-wait').hidden = me.isHost;
   for (const id of SETTING_IDS) $('#set-' + id).disabled = !me.isHost;
+  refreshSourceSelect();
   // streak is solo-only
   const streakOpt = $('#set-mode option[value="streak"]');
   streakOpt.disabled = !me.solo;
@@ -704,6 +904,7 @@ function renderLobby() {
 }
 
 let startPano = null;
+let curSource = 'google'; // which viewer the current round uses
 function startRoundView(pano, msg) {
   show('game');
   $('#hud-round').textContent = roundLabel(msg.n, msg.total);
@@ -735,17 +936,39 @@ function startRoundView(pano, msg) {
   $('#pano-loading').hidden = false;
   if (isCountryMode(msg.mode)) Countries.load().catch(() => {});
   startPano = { pano, heading: msg.heading || 0 };
-  getPano().then((p) => {
-    applyRestrictions(p, msg);
-    p.setPano(pano);
-    p.setPov({ heading: startPano.heading, pitch: 0 });
-    p.setZoom(0);
-    p.setVisible(true);
-    setTimeout(() => { $('#pano-loading').hidden = true; }, 4000); // never block forever
-  }).catch(() => {
-    $('#pano-loading').hidden = true;
-    toast('Street View failed to load. Take your best guess!');
-  });
+  const source = msg.source === 'mapillary' ? 'mapillary' : 'google';
+  curSource = source;
+  $('#pano').hidden = source !== 'google';
+  $('#pano-mly').hidden = source !== 'mapillary';
+  if (source === 'mapillary') {
+    mlyImage = null;
+    getMlyViewer().then((v) => {
+      applyRestrictions(msg);
+      v.resize();
+      return v.moveTo(pano).then((img) => {
+        if (curSource !== 'mapillary' || !startPano || startPano.pano !== pano) return;
+        mlyImage = img;
+        mlySetHeading(startPano.heading);
+        v.setZoom(0);
+        $('#pano-loading').hidden = true;
+      });
+    }).catch(() => {
+      $('#pano-loading').hidden = true;
+      toast('The Mapillary image failed to load. Take your best guess!');
+    });
+  } else {
+    getPano().then((p) => {
+      applyRestrictions(msg);
+      p.setPano(pano);
+      p.setPov({ heading: startPano.heading, pitch: 0 });
+      p.setZoom(0);
+      p.setVisible(true);
+    }).catch(() => {
+      $('#pano-loading').hidden = true;
+      toast('Street View failed to load. Take your best guess!');
+    });
+  }
+  setTimeout(() => { if (startPano && startPano.pano === pano) $('#pano-loading').hidden = true; }, 6000); // never block forever
   if (msg.timed) {
     view.deadline = Date.now() + msg.remaining * 1000;
     view.timerTotal = Math.max(msg.remaining, (view.settings && view.settings.time) || 0) * 1000;
@@ -754,15 +977,25 @@ function startRoundView(pano, msg) {
     view.timerInt = setInterval(tickTimer, 250);
   }
 }
-function applyRestrictions(p, msg) {
+function applyRestrictions(msg) {
   const move = msg.move || 'move';
   const canMove = move === 'move';
   const nmpz = move === 'nmpz';
-  p.setOptions({
-    linksControl: canMove, clickToGo: canMove, keyboardShortcuts: !nmpz && canMove,
-    panControl: false, zoomControl: !nmpz, // our own compass replaces Google's
-    scrollwheel: !nmpz, disableDoubleClickZoom: !canMove
-  });
+  if (curSource === 'mapillary') {
+    if (mlyViewer) {
+      // arrows and the sequence player are the ways to walk; the keyboard can also step and turn
+      for (const c of ['direction', 'sequence', 'keyboard']) {
+        if (canMove) mlyViewer.activateComponent(c); else mlyViewer.deactivateComponent(c);
+      }
+      if (nmpz) mlyViewer.deactivateComponent('zoom'); else mlyViewer.activateComponent('zoom');
+    }
+  } else if (svPano) {
+    svPano.setOptions({
+      linksControl: canMove, clickToGo: canMove, keyboardShortcuts: !nmpz && canMove,
+      panControl: false, zoomControl: !nmpz, // our own compass replaces Google's
+      scrollwheel: !nmpz, disableDoubleClickZoom: !canMove
+    });
+  }
   $('#pano-block').hidden = !nmpz;
   $('#compass').hidden = msg.compass === 'off';
   $('#compass').disabled = nmpz;
@@ -770,18 +1003,34 @@ function applyRestrictions(p, msg) {
   $('#btn-return').hidden = !canMove;
 }
 function updateCompass() {
-  if (!svPano) return;
-  const pov = svPano.getPov && svPano.getPov();
-  const h = pov && isFinite(pov.heading) ? pov.heading : 0;
+  let h = 0;
+  if (curSource === 'mapillary') h = isFinite(mlyBearing) ? mlyBearing : 0;
+  else if (svPano) {
+    const pov = svPano.getPov && svPano.getPov();
+    h = pov && isFinite(pov.heading) ? pov.heading : 0;
+  } else return;
   $('#compass').style.setProperty('--h', h.toFixed(1));
 }
 function faceNorth() {
-  if (!svPano || $('#compass').disabled) return;
+  if ($('#compass').disabled) return;
+  if (curSource === 'mapillary') { mlySetHeading(0); return; }
+  if (!svPano) return;
   const pov = svPano.getPov() || {};
   svPano.setPov({ heading: 0, pitch: pov.pitch || 0 });
 }
 function returnToStart() {
-  if (!svPano || !startPano) return;
+  if (!startPano) return;
+  if (curSource === 'mapillary') {
+    if (!mlyViewer) return;
+    const start = startPano;
+    mlyViewer.moveTo(start.pano).then((img) => {
+      mlyImage = img;
+      mlySetHeading(start.heading);
+      mlyViewer.setZoom(0);
+    }).catch(() => {});
+    return;
+  }
+  if (!svPano) return;
   svPano.setPano(startPano.pano);
   svPano.setPov({ heading: startPano.heading, pitch: 0 });
   svPano.setZoom(0);
@@ -834,6 +1083,7 @@ function renderReveal(msg) {
   $('#reveal-country').innerHTML = c ? `${Countries.flag(c.code)} ${esc(c.name)}` : '';
   $('#reveal-title').textContent = msg.answer.title;
   $('#reveal-link').href = msg.answer.url;
+  $('#reveal-link').textContent = /mapillary\.com/.test(msg.answer.url || '') ? 'Open this spot in Mapillary ↗' : 'Open this spot in Google Maps ↗';
 
   // map: answer first, then each guess line "flies" in from the guess to the answer
   revealLayer.clearLayers();
@@ -1303,7 +1553,10 @@ function init() {
   $('#btn-stats').onclick = () => { show('stats'); renderStats(); Countries.load().then(renderStats).catch(() => {}); };
   $('#btn-stats-back').onclick = () => { renderRecords(); show('home'); };
   show('home');
-  loadGoogle().catch((e) => toast(e.message)); // load the script early; no panorama is created yet
+  initSources();
+  refreshSourceSelect();
+  if (!sources.google.ok && !sources.mapillary.ok) toast('No Google Maps key or Mapillary token in config.js.');
+  if (sources.google.ok) loadGoogle().catch(() => {}); // load the script early; no panorama is created yet
   // came back to a room this tab was playing in (e.g. after a reload): rejoin automatically
   const code = room && room.toUpperCase().slice(0, 5);
   if (code && playerToken(code, false) && typeof window.Peer === 'function') {

@@ -22,6 +22,8 @@ An original browser game. Each round drops you onto a random street somewhere on
 
 ## How it works
 - **Street View:** Google Maps JavaScript API. A random seed point from `locations.js` is jittered and the nearest official panorama is used. The key lives in `config.js`.
+- **Free fallback: [Mapillary](https://www.mapillary.com).** Crowd-sourced street photos with a completely free API (no billing account, only a free client token, `mapillaryToken` in `config.js`). Coverage is good in Europe and North America and thinner elsewhere, and not every image is a 360° panorama.
+- **Street imagery setting (lobby):** *Automatic* uses Google while it works and switches to Mapillary for the same round as soon as Google reports its quota is used up or the key is refused. *Google Street View* or *Mapillary* can also be picked directly. Once Google's limit is hit, its option is shown disabled ("daily limit reached") until midnight US Pacific time, when the quota resets.
 - **Guess and results maps:** [Leaflet](https://leafletjs.com) with OpenStreetMap tiles, so they cost nothing.
 
 ### Keeping Google Maps free
@@ -31,14 +33,14 @@ Each round loads one Street View panorama per player. Google gives a free monthl
 - **Multiplayer:** peer-to-peer over WebRTC using [PeerJS](https://peerjs.com) and its free public signaling server. The host's browser runs the game, so no backend is needed and it works on GitHub Pages. Players on very strict networks (some corporate or mobile networks) may not be able to connect without a TURN server.
 
 ## Deployment
-`.github/workflows/deploy.yml` publishes the site on every push to `main`. It reads the key from the repository secret `GOOGLE_MAPS_KEY` and writes it into `config.js`, so the key never appears in the repo. Pages must be set to **Settings → Pages → Source: GitHub Actions**.
+`.github/workflows/deploy.yml` publishes the site on every push to `main`. It reads the key from the repository secret `GOOGLE_MAPS_KEY` and writes it into `config.js`, so the key never appears in the repo. The optional secret `MAPILLARY_TOKEN` is inserted the same way; without it the Mapillary fallback is turned off. Pages must be set to **Settings → Pages → Source: GitHub Actions**.
 
 ## Credits
 - Country borders: [Natural Earth](https://www.naturalearthdata.com/) via [world-atlas](https://github.com/topojson/world-atlas) (`data/`), read with [d3-geo](https://github.com/d3/d3-geo) and [topojson-client](https://github.com/topojson/topojson-client) (`vendor/`)
 - Flags: [flag-icons](https://github.com/lipis/flag-icons) (MIT, `flags/`)
 
 ## Run locally
-Paste your key into your local copy of `config.js` (don't commit it), then start any static server:
+Paste your Google key (and optionally your Mapillary token) into your local copy of `config.js` (don't commit it), then start any static server:
 
 ```bash
 python3 -m http.server 8000

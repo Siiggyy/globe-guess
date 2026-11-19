@@ -34,6 +34,17 @@ jobs:
           sed -i "s|PASTE_YOUR_GOOGLE_MAPS_KEY_HERE|${GOOGLE_MAPS_KEY}|" config.js
           grep -q "PASTE_YOUR_GOOGLE_MAPS_KEY_HERE" config.js && { echo "::error::Key was not inserted"; exit 1; } || true
 
+      - name: Insert Mapillary token from repository secret (optional)
+        env:
+          MAPILLARY_TOKEN: ${{ secrets.MAPILLARY_TOKEN }}
+        run: |
+          if [ -z "$MAPILLARY_TOKEN" ]; then
+            echo "::warning::Repository secret MAPILLARY_TOKEN is not set, so the free Mapillary fallback is disabled"
+            exit 0
+          fi
+          sed -i "s#PASTE_YOUR_MAPILLARY_TOKEN_HERE#${MAPILLARY_TOKEN}#" config.js
+          grep -q "PASTE_YOUR_MAPILLARY_TOKEN_HERE" config.js && { echo "::error::Mapillary token was not inserted"; exit 1; } || true
+
       - name: Cache-bust local scripts and styles so every deploy loads fresh files
         run: |
           v="${GITHUB_SHA::8}"

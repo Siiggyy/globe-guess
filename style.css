@@ -88,7 +88,8 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 
 /* game: full-bleed street view with a floating guess map */
 .game { position: relative; overflow: hidden; background: #000; }
-#pano { position: absolute; inset: 0; }
+#pano, #pano-mly { position: absolute; inset: 0; }
+#pano[hidden], #pano-mly[hidden] { display: none; }
 .overlay { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #fff; background: #0c1310; }
 .spinner { width: 36px; height: 36px; border-radius: 50%; border: 4px solid rgba(255,255,255,.25); border-top-color: #fff; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

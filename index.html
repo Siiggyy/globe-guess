@@ -95,6 +95,13 @@
           <label class="field"><span>Compass</span>
             <select id="set-compass"><option value="on" selected>Shown</option><option value="off">Hidden</option></select>
           </label>
+          <label class="field"><span>Street imagery</span>
+            <select id="set-source">
+              <option value="auto" selected>Automatic (Google, then Mapillary)</option>
+              <option value="google">Google Street View</option>
+              <option value="mapillary">Mapillary (free)</option>
+            </select>
+          </label>
         </div>
         <p id="lobby-wait" class="muted" hidden>Waiting for the host to start…</p>
         <div class="btn-row">
@@ -107,6 +114,7 @@
     <!-- GAME -->
     <section id="screen-game" class="screen game" hidden>
       <div id="pano" aria-label="Street-level view of the mystery location"></div>
+      <div id="pano-mly" aria-label="Street-level photo of the mystery location" hidden></div>
       <div id="pano-block" class="pano-block" hidden></div>
       <div id="pano-loading" class="overlay"><div class="spinner"></div><p>Dropping you somewhere on Earth…</p></div>
       <ul id="game-players" class="player-pills"></ul>
