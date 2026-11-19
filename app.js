@@ -326,7 +326,7 @@ function markGoogleDown(reason) {
   refreshSourceSelect();
 }
 const SOURCE_LABELS = {
-  auto: 'Automatic (Google, then Mapillary)', google: 'Google Street View', mapillary: 'Mapillary (free)'
+  auto: 'Automatic (Google, then Mapillary)', google: 'Google Street View', mapillary: 'Mapillary'
 };
 const DOWN_LABELS = { quota: 'daily limit reached', auth: 'key rejected', nokey: 'not configured' };
 function refreshSourceSelect() {
