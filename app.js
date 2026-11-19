@@ -422,7 +422,16 @@ let mlyViewer = null, mlyImage = null, mlyBearing = 0;
 async function getMlyViewer() {
   const lib = await loadMapillary();
   if (!mlyViewer) {
-    mlyViewer = new lib.Viewer({ accessToken: mapillaryToken(), container: 'pano-mly', component: { cover: false } });
+    mlyViewer = new lib.Viewer({
+      accessToken: mapillaryToken(), container: 'pano-mly',
+      // snap to the next photo instead of the slow animated glide between photos
+      transitionMode: lib.TransitionMode ? lib.TransitionMode.Instantaneous : undefined,
+      component: {
+        cover: false,
+        // preload more neighbouring photos (the maximum the viewer allows), so steps rarely wait on the network
+        cache: { depth: { sequence: 4, spherical: 2, step: 3, turn: 1 } }
+      }
+    });
     mlyViewer.on('bearing', (e) => { mlyBearing = e.bearing; if (curSource === 'mapillary') updateCompass(); });
     mlyViewer.on('image', (e) => {
       if (curSource !== 'mapillary' || !e.image) return;
